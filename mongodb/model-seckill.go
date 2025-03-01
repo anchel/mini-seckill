@@ -14,9 +14,9 @@ type EntitySecKill struct {
 
 	Name      string `json:"name" bson:"name"`
 	Desc      string `json:"desc" bson:"desc"`
-	StartTime int    `json:"start_time" bson:"start_time"`
-	EndTime   int    `json:"end_time" bson:"end_time"`
-	Total     int    `json:"total" bson:"total"`
+	StartTime int64  `json:"start_time" bson:"start_time"`
+	EndTime   int64  `json:"end_time" bson:"end_time"`
+	Total     int64  `json:"total" bson:"total"`
 }
 
 // 实现 ModelEntier 接口
