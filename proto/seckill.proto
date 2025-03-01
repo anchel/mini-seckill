@@ -54,12 +54,11 @@ message GetSeckillResponse {
 }
 
 enum JoinSeckillStatus {
-    JOIN_SECKILL_STATUS_UNKNOWN = 0;
-    JOIN_SECKILL_STATUS_NOT_START = 1; // 未开始
-    JOIN_SECKILL_STATUS_FINISHED = 2; // 已结束
-    JOIN_SECKILL_STATUS_PARTICIPATING = 3; // 参与中
-    JOIN_SECKILL_STATUS_SUCCESS = 4; // 成功
-    JOIN_SECKILL_STATUS_FAIL = 5; // 失败
+    JS_UNKNOWN = 0;
+    JS_NOT_START = 1; // 未开始
+    JS_FINISHED = 2; // 已结束
+    JS_SUCCESS = 3; // 参与成功
+    JS_FAILED = 4; // 参与失败
 }
 
 message JoinSeckillRequest {
@@ -68,15 +67,15 @@ message JoinSeckillRequest {
 }
 
 message JoinSeckillResponse {
-    bool success = 1;
-    JoinSeckillStatus status = 2;
+    JoinSeckillStatus status = 1;
 }
 
 enum InquireSeckillStatus {
-    INQUIRE_SECKILL_STATUS_UNKNOWN = 0;
-    INQUIRE_SECKILL_STATUS_QUEUEING = 1; // 排队中
-    INQUIRE_SECKILL_STATUS_SUCCESS = 3; // 成功
-    INQUIRE_SECKILL_STATUS_FAIL = 4; // 失败
+    IS_UNKNOWN = 0;
+    IS_NOT_PARTICIPATING = 1; // 未参与
+    IS_QUEUEING = 2; // 排队中
+    IS_SUCCESS = 3; // 成功
+    IS_FAILED = 4; // 失败
 }
 
 message InquireSeckillRequest {

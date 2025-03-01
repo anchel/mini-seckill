@@ -35,6 +35,7 @@ type CacheSeckill struct {
 	StartTime int64      `json:"start_time"`
 	EndTime   int64      `json:"end_time"`
 	Total     int64      `json:"total"`
+	Finished  int32      `json:"finished"`
 	CreateAt  *time.Time `json:"create_at"`
 }
 
@@ -50,6 +51,7 @@ func CreateSeckill(ctx context.Context, req *CreateSeckillRequest) (*CreateSecki
 		StartTime: req.StartTime,
 		EndTime:   req.EndTime,
 		Total:     req.Total,
+		Finished:  0,
 	}
 	id, err := mongodb.ModelSecKill.InsertOne(ctx, doc)
 	if err != nil {
@@ -65,6 +67,7 @@ func CreateSeckill(ctx context.Context, req *CreateSeckillRequest) (*CreateSecki
 		StartTime: doc.StartTime,
 		EndTime:   doc.EndTime,
 		Total:     doc.Total,
+		Finished:  doc.Finished,
 		CreateAt:  &doc.EntityBase.CreatedAt,
 	})
 	if err != nil {
@@ -93,6 +96,7 @@ type GetSeckillResponse struct {
 	StartTime   int64
 	EndTime     int64
 	Total       int64
+	Finished    int32
 	CreatedAt   *time.Time
 }
 
@@ -102,7 +106,27 @@ func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillRespons
 	str, err := redisclient.Rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
-			return nil, nil
+			// 降级从mongodb中获取
+			doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
+			if err != nil {
+				log.Error("GetSeckill mongodb.ModelSecKill.FindByID", "err", err)
+				return nil, err
+			}
+			if doc == nil {
+				return nil, nil
+			}
+
+			// todo: 保存到redis
+			return &GetSeckillResponse{
+				Id:          req.Id,
+				Name:        doc.Name,
+				Description: doc.Desc,
+				StartTime:   doc.StartTime,
+				EndTime:     doc.EndTime,
+				Total:       doc.Total,
+				Finished:    doc.Finished,
+				CreatedAt:   &doc.EntityBase.CreatedAt,
+			}, nil
 		}
 		log.Error("redisclient.Rdb.Get", "err", err)
 		return nil, err
@@ -121,6 +145,7 @@ func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillRespons
 		StartTime:   cache.StartTime,
 		EndTime:     cache.EndTime,
 		Total:       cache.Total,
+		Finished:    cache.Finished,
 		CreatedAt:   cache.CreateAt,
 	}, nil
 }
@@ -131,25 +156,14 @@ type JoinSeckillRequest struct {
 }
 
 type JoinSeckillResponse struct {
-	Success bool
-	Status  pb.JoinSeckillStatus
+	Status pb.JoinSeckillStatus
 }
 
 var localCache sync.Map
 
 // JoinSeckill joins a seckill activity
+// todo: 判断是否已经秒杀成功再决定是否加入队列
 func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResponse, error) {
-	// 优先从本地缓存中获取
-	// lsk, ok := localCache.Load(req.SeckillID)
-	// if ok {
-	// 	csk, tc := lsk.(*CacheSeckill)
-	// 	if tc {
-	// 		canJoin, status := checkSeckillCanJoin(csk)
-	// 		if !canJoin {
-	// 			return &JoinSeckillResponse{success: false, status: status}, nil
-	// 		}
-	// 	}
-	// }
 
 	sk, err := GetSeckill(ctx, &GetSeckillRequest{Id: req.SeckillID})
 	if err != nil {
@@ -160,14 +174,14 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 		return nil, errors.New("seckill is not found")
 	}
 
-	canJoin, status := checkSeckillCanJoin(&CacheSeckill{
+	status := checkSeckillCanJoin(&CacheSeckill{
 		Id:        sk.Id,
 		StartTime: sk.StartTime,
 		EndTime:   sk.EndTime,
 		Total:     sk.Total,
 	})
-	if !canJoin {
-		return &JoinSeckillResponse{Success: false, Status: status}, nil
+	if status != pb.JoinSeckillStatus_JS_UNKNOWN {
+		return &JoinSeckillResponse{Status: status}, nil
 	}
 
 	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", req.SeckillID, req.UserID)
@@ -179,8 +193,8 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 
 	cmds, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.HIncrBy(ctx, keyticket, field1, 1)
-		pipe.HSetNX(ctx, keyticket, field2, int32(pb.JoinSeckillStatus_JOIN_SECKILL_STATUS_PARTICIPATING))
-		pipe.Expire(ctx, keyticket, time.Duration(rand.Intn(600)+7200)*time.Second)
+		pipe.HSetNX(ctx, keyticket, field2, pb.InquireSeckillStatus_IS_QUEUEING.String()) // 默认状态是排队中
+		pipe.Expire(ctx, keyticket, time.Duration(rand.Intn(20)+30)*time.Second)
 		pipe.RPush(ctx, keyqueue, val)
 		return nil
 	})
@@ -198,16 +212,80 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 		return nil, cmd0.Err()
 	}
 
-	return &JoinSeckillResponse{Success: true, Status: pb.JoinSeckillStatus_JOIN_SECKILL_STATUS_PARTICIPATING}, nil
+	count := cmds[0].(*redis.IntCmd).Val()
+	log.Info("JoinSeckill", "seckillid", req.SeckillID, "userid", req.UserID, "count", count)
+
+	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JS_SUCCESS}, nil
 }
 
-func checkSeckillCanJoin(csk *CacheSeckill) (bool, pb.JoinSeckillStatus) {
+func checkSeckillCanJoin(csk *CacheSeckill) pb.JoinSeckillStatus {
 	now := time.Now().UnixMilli()
+
+	if csk.Finished == 1 || csk.EndTime < now {
+		return pb.JoinSeckillStatus_JS_FINISHED
+	}
+
 	if csk.StartTime > now {
-		return false, pb.JoinSeckillStatus_JOIN_SECKILL_STATUS_NOT_START
+		return pb.JoinSeckillStatus_JS_NOT_START
 	}
-	if csk.EndTime < now {
-		return false, pb.JoinSeckillStatus_JOIN_SECKILL_STATUS_FINISHED
+
+	return pb.JoinSeckillStatus_JS_UNKNOWN
+}
+
+type InquireSeckillRequest struct {
+	SeckillID string
+	UserID    string
+}
+
+type InquireSeckillResponse struct {
+	Status pb.InquireSeckillStatus
+}
+
+// InquireSeckill 查询秒杀状态
+func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSeckillResponse, error) {
+	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", req.SeckillID, req.UserID)
+	field2 := "status"
+
+	status, err := redisclient.Rdb.HGet(ctx, keyticket, field2).Result()
+	if err != nil {
+		if err == redis.Nil {
+			// redis中没有记录，不一定是未参与，可能是已经过期，返回未参与状态，让用户重新加入队列也可以得到结果
+			// 如果用户不再次加入队列，如何获取真实状态？
+			return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil
+		}
+		log.Error("InquireSeckill redisclient.Rdb.HGet", "err", err)
+		return nil, err
 	}
-	return true, pb.JoinSeckillStatus_JOIN_SECKILL_STATUS_UNKNOWN
+
+	// 秒杀成功
+	if status == pb.InquireSeckillStatus_IS_SUCCESS.String() {
+		// todo: 去数据库中查询是否已经秒杀成功
+		return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_SUCCESS}, nil
+	}
+
+	// 秒杀失败
+	if status == pb.InquireSeckillStatus_IS_FAILED.String() {
+		return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_FAILED}, nil
+	}
+
+	// 排队中
+	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
+		maxPollCount := 20
+		for range maxPollCount {
+			status, err = redisclient.Rdb.HGet(ctx, keyticket, field2).Result()
+			if err != nil {
+				if err == redis.Nil {
+					return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil
+				}
+				log.Error("InquireSeckill redisclient.Rdb.HGet", "err", err)
+				return nil, err
+			}
+			if status != pb.InquireSeckillStatus_IS_QUEUEING.String() {
+				return &InquireSeckillResponse{Status: pb.InquireSeckillStatus(pb.InquireSeckillStatus_value[status])}, nil
+			}
+			time.Sleep(1000 * time.Millisecond) // sleep 1000ms
+		}
+	}
+
+	return nil, errors.New("InquireSeckill timeout")
 }

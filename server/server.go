@@ -95,7 +95,6 @@ func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillReque
 		return nil, err
 	}
 	return &pb.JoinSeckillResponse{
-		Success: rsp.Success,
-		Status:  rsp.Status,
+		Status: rsp.Status,
 	}, nil
 }
