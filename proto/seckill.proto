@@ -1,0 +1,90 @@
+syntax = "proto3";
+
+option go_package = "github.com/anchel/mini-seckill/proto";
+
+package proto;
+
+service SeckillService {
+    // 创建秒杀活动
+    rpc CreateSeckill(CreateSeckillRequest) returns (CreateSeckillResponse) {}
+
+    // 获取秒杀活动
+    rpc GetSeckill(GetSeckillRequest) returns (GetSeckillResponse) {}
+
+    // 参与秒杀活动
+    rpc JoinSeckill(JoinSeckillRequest) returns (JoinSeckillResponse) {}
+
+    // 查询秒杀状态
+    rpc InquireSeckill(InquireSeckillRequest) returns (InquireSeckillResponse) {}
+
+    // 检查最终秒杀结果
+    rpc CheckSeckillResult(CheckSeckillResultRequest) returns (CheckSeckillResultResponse) {}
+}
+
+message CreateSeckillRequest {
+    string name = 1;
+    string description = 2;
+    int64 start_time = 3;
+    int64 end_time = 4;
+    int64 total = 5;
+}
+
+message CreateSeckillResponse {
+    string id = 1;
+}
+
+message GetSeckillRequest {
+    string id = 1;
+}
+
+message GetSeckillResponse {
+    string id = 1;
+    string name = 2;
+    string description = 3;
+    int64 start_time = 4;
+    int64 end_time = 5;
+    int64 total = 6;
+}
+
+enum JoinSeckillStatus {
+    JOIN_SECKILL_STATUS_UNKNOWN = 0;
+    JOIN_SECKILL_STATUS_NOT_START = 1; // 未开始
+    JOIN_SECKILL_STATUS_PARTICIPATING = 2; // 参与中
+    JOIN_SECKILL_STATUS_SUCCESS = 3; // 成功
+    JOIN_SECKILL_STATUS_FAIL = 4; // 失败
+}
+
+message JoinSeckillRequest {
+    string seckill_id = 1;
+    string user_id = 2;
+}
+
+message JoinSeckillResponse {
+    bool success = 1;
+    JoinSeckillStatus status = 2;
+}
+
+enum InquireSeckillStatus {
+    INQUIRE_SECKILL_STATUS_UNKNOWN = 0;
+    INQUIRE_SECKILL_STATUS_QUEUEING = 1; // 排队中
+    INQUIRE_SECKILL_STATUS_SUCCESS = 3; // 成功
+    INQUIRE_SECKILL_STATUS_FAIL = 4; // 失败
+}
+
+message InquireSeckillRequest {
+    string seckill_id = 1;
+    string user_id = 2;
+}
+
+message InquireSeckillResponse {
+    InquireSeckillStatus status = 1;
+}
+
+message CheckSeckillResultRequest {
+    string seckill_id = 1;
+    string user_id = 2;
+}
+
+message CheckSeckillResultResponse {
+    bool success = 1;
+}
