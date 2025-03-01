@@ -16,7 +16,7 @@ type EntitySecKillResult struct {
 
 	ID primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
 
-	SecKillID string `json:"seckill_id" bson:"seckill_id"`
+	SeckillID string `json:"seckill_id" bson:"seckill_id"`
 	UserID    string `json:"user_id" bson:"user_id"`
 
 	SecKillTime *time.Time `json:"seckill_time" bson:"seckill_time"`

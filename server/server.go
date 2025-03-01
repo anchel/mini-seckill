@@ -44,3 +44,58 @@ func (s *SeckillServer) CreateSeckill(ctx context.Context, in *pb.CreateSeckillR
 	}
 	return &pb.CreateSeckillResponse{Id: rsp.Id}, nil
 }
+
+func (s *SeckillServer) GetSeckill(ctx context.Context, in *pb.GetSeckillRequest) (*pb.GetSeckillResponse, error) {
+	log.Infof("Received: %v", in)
+	if in.Id == "" {
+		return nil, errors.New("id is empty")
+	}
+	req := &service.GetSeckillRequest{
+		Id: in.Id,
+	}
+	rsp, err := service.GetSeckill(ctx, req)
+	if err != nil {
+		log.Error("service.GetSeckill", "err", err)
+		return nil, err
+	}
+	if rsp == nil {
+		// return nil, errors.New("seckill is not found")
+		log.Info("seckill is not found", "id", in.Id)
+		return &pb.GetSeckillResponse{}, nil
+	}
+	return &pb.GetSeckillResponse{
+		Seckill: &pb.Seckill{
+			Id:          rsp.Id,
+			Name:        rsp.Name,
+			Description: rsp.Description,
+			StartTime:   rsp.StartTime,
+			EndTime:     rsp.EndTime,
+			Total:       rsp.Total,
+			CreatedAt:   rsp.CreatedAt.UnixMilli(),
+		},
+	}, nil
+}
+
+func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillRequest) (*pb.JoinSeckillResponse, error) {
+	log.Infof("Received: %v", in)
+	if in.SeckillId == "" {
+		return nil, errors.New("SeckillId is empty")
+	}
+	if in.UserId == "" {
+		return nil, errors.New("UserId is empty")
+	}
+
+	req := &service.JoinSeckillRequest{
+		SeckillID: in.SeckillId,
+		UserID:    in.UserId,
+	}
+	rsp, err := service.JoinSeckill(ctx, req)
+	if err != nil {
+		log.Error("service.JoinSeckill", "err", err)
+		return nil, err
+	}
+	return &pb.JoinSeckillResponse{
+		Success: rsp.Success,
+		Status:  rsp.Status,
+	}, nil
+}
