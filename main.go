@@ -11,19 +11,11 @@ import (
 	"github.com/anchel/mini-seckill/mongodb"
 	pb "github.com/anchel/mini-seckill/proto"
 	"github.com/anchel/mini-seckill/redisclient"
+	"github.com/anchel/mini-seckill/server"
 	"github.com/charmbracelet/log"
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
 )
-
-type server struct {
-	pb.UnimplementedSeckillServiceServer
-}
-
-func (s *server) CreateSeckill(_ context.Context, in *pb.CreateSeckillRequest) (*pb.CreateSeckillResponse, error) {
-	log.Infof("Received: %v", in)
-	return &pb.CreateSeckillResponse{Id: "seckill001"}, nil
-}
 
 func main() {
 	rootCtx, cancel := context.WithCancel(context.Background())
@@ -88,7 +80,7 @@ func main() {
 		return
 	}
 	s := grpc.NewServer()
-	pb.RegisterSeckillServiceServer(s, &server{})
+	pb.RegisterSeckillServiceServer(s, &server.SeckillServer{})
 	log.Infof("server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
 		log.Errorf("failed to serve: %v", err)
