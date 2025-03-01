@@ -13,8 +13,9 @@ type SeckillServer struct {
 	pb.UnimplementedSeckillServiceServer
 }
 
+// CreateSeckill 创建秒杀活动
 func (s *SeckillServer) CreateSeckill(ctx context.Context, in *pb.CreateSeckillRequest) (*pb.CreateSeckillResponse, error) {
-	log.Infof("Received: %v", in)
+	log.Infof("CreateSeckill Received: %v", in)
 	if in.Name == "" {
 		return nil, errors.New("name is empty")
 	}
@@ -45,8 +46,9 @@ func (s *SeckillServer) CreateSeckill(ctx context.Context, in *pb.CreateSeckillR
 	return &pb.CreateSeckillResponse{Id: rsp.Id}, nil
 }
 
+// GetSeckill 获取秒杀活动信息
 func (s *SeckillServer) GetSeckill(ctx context.Context, in *pb.GetSeckillRequest) (*pb.GetSeckillResponse, error) {
-	log.Infof("Received: %v", in)
+	log.Infof("GetSeckill Received: %v", in)
 	if in.Id == "" {
 		return nil, errors.New("id is empty")
 	}
@@ -76,8 +78,9 @@ func (s *SeckillServer) GetSeckill(ctx context.Context, in *pb.GetSeckillRequest
 	}, nil
 }
 
+// JoinSeckill 加入秒杀活动
 func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillRequest) (*pb.JoinSeckillResponse, error) {
-	log.Infof("Received: %v", in)
+	log.Infof("JoinSeckill Received: %v", in)
 	if in.SeckillId == "" {
 		return nil, errors.New("SeckillId is empty")
 	}
@@ -95,6 +98,30 @@ func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillReque
 		return nil, err
 	}
 	return &pb.JoinSeckillResponse{
+		Status: rsp.Status,
+	}, nil
+}
+
+// InquireSeckill 查询秒杀状态
+func (s *SeckillServer) InquireSeckill(ctx context.Context, in *pb.InquireSeckillRequest) (*pb.InquireSeckillResponse, error) {
+	log.Infof("InquireSeckill Received: %v", in)
+	if in.SeckillId == "" {
+		return nil, errors.New("SeckillId is empty")
+	}
+	if in.UserId == "" {
+		return nil, errors.New("UserId is empty")
+	}
+
+	req := &service.InquireSeckillRequest{
+		SeckillID: in.SeckillId,
+		UserID:    in.UserId,
+	}
+	rsp, err := service.InquireSeckill(ctx, req)
+	if err != nil {
+		log.Error("service.InquireSeckill", "err", err)
+		return nil, err
+	}
+	return &pb.InquireSeckillResponse{
 		Status: rsp.Status,
 	}, nil
 }

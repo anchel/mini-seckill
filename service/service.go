@@ -257,6 +257,8 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 		return nil, err
 	}
 
+	log.Info("InquireSeckill", "status", status)
+
 	// 秒杀成功
 	if status == pb.InquireSeckillStatus_IS_SUCCESS.String() {
 		// todo: 去数据库中查询是否已经秒杀成功
@@ -270,7 +272,7 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 
 	// 排队中
 	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
-		maxPollCount := 20
+		maxPollCount := 10
 		for range maxPollCount {
 			status, err = redisclient.Rdb.HGet(ctx, keyticket, field2).Result()
 			if err != nil {
@@ -280,6 +282,7 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 				log.Error("InquireSeckill redisclient.Rdb.HGet", "err", err)
 				return nil, err
 			}
+			log.Info("InquireSeckill loop", "status", status)
 			if status != pb.InquireSeckillStatus_IS_QUEUEING.String() {
 				return &InquireSeckillResponse{Status: pb.InquireSeckillStatus(pb.InquireSeckillStatus_value[status])}, nil
 			}
