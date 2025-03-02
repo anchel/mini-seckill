@@ -73,6 +73,7 @@ func (s *SeckillServer) GetSeckill(ctx context.Context, in *pb.GetSeckillRequest
 			StartTime:   rsp.StartTime,
 			EndTime:     rsp.EndTime,
 			Total:       rsp.Total,
+			Remaining:   rsp.Remaining,
 			CreatedAt:   rsp.CreatedAt.UnixMilli(),
 		},
 	}, nil
@@ -122,6 +123,7 @@ func (s *SeckillServer) InquireSeckill(ctx context.Context, in *pb.InquireSeckil
 		return nil, err
 	}
 	return &pb.InquireSeckillResponse{
-		Status: rsp.Status,
+		Status:  rsp.Status,
+		OrderId: rsp.OrderId,
 	}, nil
 }

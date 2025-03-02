@@ -15,14 +15,14 @@ import (
 )
 
 type MongoClient struct {
-	client   *mongo.Client
+	Client   *mongo.Client
 	database *mongo.Database
 	lock     sync.RWMutex
 }
 
 var (
-	instance *MongoClient
-	once     sync.Once
+	MongoClientInstance *MongoClient
+	once                sync.Once
 )
 
 type MongoConfig struct {
@@ -78,8 +78,8 @@ func NewMongoClient() (*MongoClient, error) {
 			return
 		}
 
-		instance = &MongoClient{
-			client:   client,
+		MongoClientInstance = &MongoClient{
+			Client:   client,
 			database: client.Database(cfg.Database),
 		}
 
@@ -89,11 +89,11 @@ func NewMongoClient() (*MongoClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	return instance, nil
+	return MongoClientInstance, nil
 }
 
 func (m *MongoClient) GetDatabase(dbName string) *mongo.Database {
-	return m.client.Database(dbName)
+	return m.Client.Database(dbName)
 }
 
 // GetCollection 获取指定集合的句柄
@@ -109,7 +109,7 @@ func (m *MongoClient) Reconnect(ctx context.Context) error {
 	m.lock.Lock()
 	defer m.lock.Unlock()
 
-	if err := m.client.Disconnect(ctx); err != nil {
+	if err := m.Client.Disconnect(ctx); err != nil {
 		log.Printf("Failed to disconnect: %v", err)
 		return err
 	}
@@ -122,7 +122,7 @@ func (m *MongoClient) Reconnect(ctx context.Context) error {
 		return err
 	}
 
-	m.client = newClient
+	m.Client = newClient
 	m.database = newClient.Database(m.database.Name())
 	log.Info("Reconnected to MongoDB successfully.")
 	return nil
@@ -130,12 +130,12 @@ func (m *MongoClient) Reconnect(ctx context.Context) error {
 
 // Disconnect 优雅地断开连接
 func (m *MongoClient) Disconnect(ctx context.Context) error {
-	return m.client.Disconnect(ctx)
+	return m.Client.Disconnect(ctx)
 }
 
 // HealthCheck 检查 MongoDB 的健康状态
 func (m *MongoClient) HealthCheck(ctx context.Context) bool {
-	if err := m.client.Ping(ctx, nil); err != nil {
+	if err := m.Client.Ping(ctx, nil); err != nil {
 		log.Printf("MongoDB is not healthy: %v", err)
 		return false
 	}

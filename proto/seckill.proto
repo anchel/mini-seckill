@@ -28,9 +28,10 @@ message Seckill {
     int64 start_time = 4;
     int64 end_time = 5;
     int64 total = 6;
-    int64 created_at = 7;
-    int64 updated_at = 8;
-    int64 deleted_at = 9;
+    int64 remaining = 7;
+    int64 created_at = 8;
+    int64 updated_at = 9;
+    int64 deleted_at = 10;
 }
 
 message CreateSeckillRequest {
@@ -57,8 +58,9 @@ enum JoinSeckillStatus {
     JS_UNKNOWN = 0;
     JS_NOT_START = 1; // 未开始
     JS_FINISHED = 2; // 已结束
-    JS_SUCCESS = 3; // 加入成功
-    JS_FAILED = 4; // 加入失败
+    JS_EMPTY = 3; // 已抢空
+    JS_SUCCESS = 4; // 加入成功
+    JS_FAILED = 5; // 加入失败
 }
 
 message JoinSeckillRequest {
@@ -85,6 +87,7 @@ message InquireSeckillRequest {
 
 message InquireSeckillResponse {
     InquireSeckillStatus status = 1;
+    string order_id = 2;
 }
 
 message CheckSeckillResultRequest {
@@ -94,4 +97,5 @@ message CheckSeckillResultRequest {
 
 message CheckSeckillResultResponse {
     bool success = 1;
+    string order_id = 2;
 }

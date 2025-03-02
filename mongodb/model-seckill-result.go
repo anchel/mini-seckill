@@ -58,7 +58,7 @@ func init() {
 					{Key: "seckill_id", Value: 1},
 					{Key: "user_id", Value: 1},
 				},
-				Options: options.Index().SetUnique(false),
+				Options: options.Index().SetUnique(true),
 			})
 			if err != nil {
 				log.Error("Error Create Index")
