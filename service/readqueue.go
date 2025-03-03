@@ -18,6 +18,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
 var MaxQueueSize = 1
@@ -181,9 +182,8 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", seckillId, userId)
 	field := "status"
 
-	// wc := writeconcern.Majority()
-	// txnOptions := options.Transaction().SetWriteConcern(wc)
-	txnOptions := options.Transaction()
+	wc := writeconcern.Majority()
+	txnOptions := options.Transaction().SetWriteConcern(wc)
 
 	// Starts a session on the client
 	session, err := mongodb.MongoClientInstance.Client.StartSession()
@@ -245,23 +245,24 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 			UserID:      userId,
 			SecKillTime: &now,
 		}
+		doc.CreatedAt = now
 		result2, err := collectionSeckillResult.InsertOne(ctx, doc)
 		if err != nil {
-			log.Error("tryDoSeckill InsertOne", "collection", collectionSeckillResult.Name(), "doc", doc, "err", err)
+			log.Warn("tryDoSeckill InsertOne", "collection", collectionSeckillResult.Name(), "doc", doc, "err", err)
 			// 是否要区分是普通错误，还是由于唯一索引冲突导致的错误？
 			return pb.InquireSeckillStatus_IS_FAILED, err
 		}
 
-		log.Info("tryDoSeckill UpdateOne", "collection", collectionSeckillResult.Name(), "seckillId", seckillId, "userId", userId, "result", result2)
+		log.Info("tryDoSeckill InsertOne", "collection", collectionSeckillResult.Name(), "seckillId", seckillId, "userId", userId, "result", result2)
 
 		return pb.InquireSeckillStatus_IS_SUCCESS, err
 	}, txnOptions)
 
 	if err != nil {
-		log.Error("tryDoSeckill WithTransaction", "err", err)
+		log.Warn("tryDoSeckill WithTransaction", "err", err)
 		if tresult != nil {
 			status := tresult.(pb.InquireSeckillStatus)
-			innererr := redisop.HSet(ctx, keyticket, field, status)
+			innererr := redisop.HSet(ctx, keyticket, field, status.String())
 			if innererr != nil {
 				log.Error("tryDoSeckill WithTransaction", "redisop.HSet", "err", innererr)
 			}
@@ -270,8 +271,12 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 	}
 	log.Info("tryDoSeckill WithTransaction", "result", tresult)
 
+	if tresult == nil {
+		tresult = pb.InquireSeckillStatus_IS_FAILED
+	}
+
 	// 更新redis上的状态
-	err = redisop.HSet(ctx, keyticket, field, pb.InquireSeckillStatus_IS_SUCCESS)
+	err = redisop.HSet(ctx, keyticket, field, tresult.(pb.InquireSeckillStatus).String())
 	if err != nil {
 		log.Error("tryDoSeckill redisop.HSet", "err", err)
 		return err

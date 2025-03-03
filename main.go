@@ -57,7 +57,7 @@ func main() {
 	// init mongodb
 	mongoClient, err := mongodb.InitMongoDB()
 	if err != nil {
-		log.Error("Error mongodb.InitMongoDB")
+		log.Error("Error mongodb.InitMongoDB", "err", err)
 		return
 	}
 	defer mongoClient.Disconnect(context.Background())

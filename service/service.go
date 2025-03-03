@@ -113,6 +113,7 @@ func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillRespons
 	str, err := redisclient.Rdb.Get(ctx, key).Result()
 	if err != nil {
 		if err == redis.Nil {
+			log.Info("GetSeckill not found in redis, look for it in the database", "key", key, "err", err)
 			// 降级从mongodb中获取
 			doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
 			if err != nil {
@@ -120,10 +121,12 @@ func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillRespons
 				return nil, err
 			}
 			if doc == nil {
+				log.Info("GetSeckill not found in database", "id", req.Id)
 				return nil, nil
 			}
 
 			// todo: 保存到redis
+
 			return &GetSeckillResponse{
 				Id:          req.Id,
 				Name:        doc.Name,
@@ -176,6 +179,7 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	// 先从本地缓存中获取
 	ldata, ok := SeckillInfoLocalCacheMap.Load(req.SeckillID)
 	if ok {
+		log.Info("JoinSeckill seckill found in localcache", "SeckillID", req.SeckillID)
 		lcsk := ldata.(*LocalCacheSeckill)
 		status := checkSeckillCanJoin(&CacheSeckill{
 			Id:        lcsk.Id,
@@ -190,7 +194,7 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 		}
 	}
 
-	// 本地缓存中没有，从redis和数据库中获取
+	// 本地缓存中没有，再从redis，以及数据库中获取
 	sk, err := GetSeckill(ctx, &GetSeckillRequest{Id: req.SeckillID})
 	if err != nil {
 		log.Error("GetSeckill", "err", err)
