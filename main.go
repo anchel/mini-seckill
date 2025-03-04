@@ -20,6 +20,9 @@ import (
 )
 
 func main() {
+
+	// log.SetLevel(log.ErrorLevel)
+
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

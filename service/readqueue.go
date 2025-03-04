@@ -117,7 +117,7 @@ func startReadQueue(ctx context.Context) {
 			var startRead <-chan time.Time
 			if done == nil {
 				if delay {
-					startRead = time.After(3000 * time.Millisecond)
+					startRead = time.After(1000 * time.Millisecond)
 				} else {
 					startRead = time.After(10 * time.Millisecond)
 				}

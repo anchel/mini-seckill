@@ -85,53 +85,6 @@ type GetSeckillResponse struct {
 
 // GetSeckill gets a seckill activity
 func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillResponse, error) {
-	// key := "seckill:" + req.Id
-	// str, err := redisclient.Rdb.Get(ctx, key).Result()
-	// if err != nil {
-	// 	if err == redis.Nil {
-	// 		log.Info("GetSeckill not found in redis, look for it in the database", "key", key, "err", err)
-	// 		// 降级从mongodb中获取
-	// 		doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
-	// 		if err != nil {
-	// 			log.Error("GetSeckill mongodb.ModelSecKill.FindByID", "err", err)
-	// 			return nil, err
-	// 		}
-	// 		if doc == nil {
-	// 			log.Info("GetSeckill not found in database", "id", req.Id)
-	// 			return nil, nil
-	// 		}
-
-	// 		// TODO: 保存到redis
-
-	// 		return &GetSeckillResponse{
-	// 			Id:          req.Id,
-	// 			Name:        doc.Name,
-	// 			Description: doc.Desc,
-	// 			StartTime:   doc.StartTime,
-	// 			EndTime:     doc.EndTime,
-	// 			Total:       doc.Total,
-	// 			Remaining:   doc.Remaining,
-	// 			Finished:    doc.Finished,
-	// 			CreatedAt:   &doc.EntityBase.CreatedAt,
-	// 		}, nil
-	// 	}
-	// 	log.Error("redisclient.Rdb.Get", "err", err)
-	// 	return nil, err
-	// }
-	// var cache CacheSeckill
-	// err = json.Unmarshal([]byte(str), &cache)
-	// if err != nil {
-	// 	log.Error("json.Unmarshal", "err", err)
-	// 	return nil, err
-	// }
-
-	// return &GetSeckillResponse{
-	// 	StartTime: cache.StartTime,
-	// 	EndTime:   cache.EndTime,
-	// 	Total:     cache.Total,
-	// 	Remaining: cache.Remaining,
-	// 	Finished:  cache.Finished,
-	// }, nil
 
 	doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
 	if err != nil {
@@ -169,49 +122,6 @@ var localCache sync.Map
 
 // JoinSeckill joins a seckill activity
 func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResponse, error) {
-	// // 先从本地缓存中获取
-	// ldata, ok := SeckillInfoLocalCacheMap.Load(req.SeckillID)
-	// if ok {
-	// 	log.Info("JoinSeckill seckill found in localcache", "SeckillID", req.SeckillID)
-	// 	lcsk := ldata.(*LocalCacheSeckill)
-	// 	status := checkSeckillCanJoin(&CacheSeckill{
-	// 		StartTime: lcsk.StartTime,
-	// 		EndTime:   lcsk.EndTime,
-	// 		Total:     lcsk.Total,
-	// 		Remaining: lcsk.Remaining,
-	// 		Finished:  lcsk.Finished,
-	// 	})
-	// 	if status != pb.JoinSeckillStatus_JS_UNKNOWN {
-	// 		return &JoinSeckillResponse{Status: status}, nil
-	// 	}
-	// }
-
-	// // 本地缓存中没有，从redis中获取
-	// fields := []string{"StartTime", "EndTime", "Total", "Remaining", "Finished"}
-	// vals, err := redisop.HMGet(ctx, "seckill:"+req.SeckillID, fields...)
-	// if err != nil {
-	// 	log.Error("JoinSeckill redisop.HMGet", "err", err)
-	// 	return nil, err
-	// }
-
-	// // 从redis中获取到的数据为空, 从数据库中获取
-	// sk, err := GetSeckill(ctx, &GetSeckillRequest{Id: req.SeckillID})
-	// if err != nil {
-	// 	log.Error("GetSeckill", "err", err)
-	// 	return nil, err
-	// }
-	// if sk == nil {
-	// 	return nil, errors.New("seckill is not found")
-	// }
-
-	// status := checkSeckillCanJoin(&CacheSeckill{
-	// 	Id:        sk.Id,
-	// 	StartTime: sk.StartTime,
-	// 	EndTime:   sk.EndTime,
-	// 	Total:     sk.Total,
-	// 	Remaining: sk.Remaining,
-	// 	Finished:  sk.Finished,
-	// })
 
 	status, err := checkCanJoinSeckill(ctx, req.SeckillID, req.UserID)
 	if err != nil {
@@ -235,7 +145,7 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	cmds, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.HIncrBy(ctx, keyticket, fieldCount, 1)
 		pipe.HSet(ctx, keyticket, fieldStatus, pb.InquireSeckillStatus_IS_QUEUEING.String()) // 默认状态是排队中
-		pipe.Expire(ctx, keyticket, time.Duration(rand.Intn(30)+600)*time.Second)
+		pipe.Expire(ctx, keyticket, time.Duration(rand.Intn(30)+60)*time.Second)
 		pipe.RPush(ctx, keyqueue, val)
 		return nil
 	})
