@@ -22,7 +22,7 @@ service SeckillService {
 }
 
 message Seckill {
-    string id = 1;
+    int64 id = 1;
     string name = 2;
     string description = 3;
     int64 start_time = 4;
@@ -43,11 +43,11 @@ message CreateSeckillRequest {
 }
 
 message CreateSeckillResponse {
-    string id = 1;
+    int64 id = 1;
 }
 
 message GetSeckillRequest {
-    string id = 1;
+    int64 id = 1;
 }
 
 message GetSeckillResponse {

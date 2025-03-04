@@ -49,7 +49,7 @@ func (s *SeckillServer) CreateSeckill(ctx context.Context, in *pb.CreateSeckillR
 // GetSeckill 获取秒杀活动信息
 func (s *SeckillServer) GetSeckill(ctx context.Context, in *pb.GetSeckillRequest) (*pb.GetSeckillResponse, error) {
 	log.Infof("GetSeckill Received: %v", in)
-	if in.Id == "" {
+	if in.Id == 0 {
 		return nil, errors.New("id is empty")
 	}
 	req := &service.GetSeckillRequest{

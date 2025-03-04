@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/anchel/mini-seckill/mongodb"
+	"github.com/anchel/mini-seckill/mysqldb"
 	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/charmbracelet/log"
 	"github.com/redis/go-redis/v9"
@@ -26,7 +27,7 @@ type CreateSeckillRequest struct {
 }
 
 type CreateSeckillResponse struct {
-	Id string
+	Id int64
 }
 
 // CreateSeckill creates a seckill activity
@@ -35,29 +36,40 @@ func CreateSeckill(ctx context.Context, req *CreateSeckillRequest) (*CreateSecki
 		return nil, errors.New("end_time is invalid")
 	}
 
-	doc := &mongodb.EntitySecKill{
-		Name:      req.Name,
-		Desc:      req.Description,
+	// doc := &mongodb.EntitySecKill{
+	// 	Name:      req.Name,
+	// 	Desc:      req.Description,
+	// 	StartTime: req.StartTime,
+	// 	EndTime:   req.EndTime,
+	// 	Total:     req.Total,
+	// 	Remaining: req.Total,
+	// 	Finished:  0,
+	// }
+	// id, err := mongodb.ModelSecKill.InsertOne(ctx, doc)
+	// if err != nil {
+	// 	log.Error("CreateSeckill mongodb.ModelSecKill.InsertOne", "err", err)
+	// 	return nil, err
+	// }
+
+	id, err := mysqldb.InsertSeckill(ctx, &mysqldb.EntitySeckill{
+		Name:        req.Name,
+		Description: req.Description,
+		StartTime:   time.UnixMilli(req.StartTime),
+		EndTime:     time.Unix(0, req.EndTime*int64(time.Millisecond)),
+		Total:       req.Total,
+		Remaining:   req.Total,
+		Finished:    0,
+		CreatedAt:   time.Now(),
+	})
+
+	// write to redis
+	err = writeSeckillToRedis(ctx, &CacheSeckill{
+		Id:        fmt.Sprintf("%d", id),
 		StartTime: req.StartTime,
 		EndTime:   req.EndTime,
 		Total:     req.Total,
 		Remaining: req.Total,
 		Finished:  0,
-	}
-	id, err := mongodb.ModelSecKill.InsertOne(ctx, doc)
-	if err != nil {
-		log.Error("CreateSeckill mongodb.ModelSecKill.InsertOne", "err", err)
-		return nil, err
-	}
-
-	// write to redis
-	err = writeSeckillToRedis(ctx, &CacheSeckill{
-		Id:        id,
-		StartTime: doc.StartTime,
-		EndTime:   doc.EndTime,
-		Total:     doc.Total,
-		Remaining: doc.Remaining,
-		Finished:  doc.Finished,
 	})
 	if err != nil {
 		log.Error("CreateSeckill writeSeckillToRedis", "err", err)
@@ -68,11 +80,11 @@ func CreateSeckill(ctx context.Context, req *CreateSeckillRequest) (*CreateSecki
 }
 
 type GetSeckillRequest struct {
-	Id string
+	Id int64
 }
 
 type GetSeckillResponse struct {
-	Id          string
+	Id          int64
 	Name        string
 	Description string
 	StartTime   int64
@@ -86,26 +98,32 @@ type GetSeckillResponse struct {
 // GetSeckill gets a seckill activity
 func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillResponse, error) {
 
-	doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
+	// doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
+	// if err != nil {
+	// 	log.Error("GetSeckill mongodb.ModelSecKill.FindByID", "err", err)
+	// 	return nil, err
+	// }
+	// if doc == nil {
+	// 	log.Info("GetSeckill not found in database", "id", req.Id)
+	// 	return nil, nil
+	// }
+
+	doc, err := mysqldb.QuerySeckillByID(ctx, req.Id, true)
 	if err != nil {
-		log.Error("GetSeckill mongodb.ModelSecKill.FindByID", "err", err)
+		log.Error("GetSeckill mysqldb.QuerySeckillByID", "err", err)
 		return nil, err
-	}
-	if doc == nil {
-		log.Info("GetSeckill not found in database", "id", req.Id)
-		return nil, nil
 	}
 
 	return &GetSeckillResponse{
 		Id:          req.Id,
 		Name:        doc.Name,
-		Description: doc.Desc,
-		StartTime:   doc.StartTime,
-		EndTime:     doc.EndTime,
+		Description: doc.Description,
+		StartTime:   doc.StartTime.UnixMilli(),
+		EndTime:     doc.EndTime.UnixMilli(),
 		Total:       doc.Total,
 		Remaining:   doc.Remaining,
 		Finished:    doc.Finished,
-		CreatedAt:   &doc.EntityBase.CreatedAt,
+		CreatedAt:   &doc.CreatedAt,
 	}, nil
 }
 

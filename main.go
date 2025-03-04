@@ -6,10 +6,9 @@ import (
 	"net"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/anchel/mini-seckill/lib/utils"
-	"github.com/anchel/mini-seckill/mongodb"
+	"github.com/anchel/mini-seckill/mysqldb"
 	pb "github.com/anchel/mini-seckill/proto"
 	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/anchel/mini-seckill/server"
@@ -25,10 +24,6 @@ func main() {
 
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-
-	exit := func() {
-		os.Exit(-1)
-	}
 
 	wgExit := sync.WaitGroup{}
 
@@ -57,27 +52,34 @@ func main() {
 		return
 	}
 
-	// init mongodb
-	mongoClient, err := mongodb.InitMongoDB()
+	// // init mongodb
+	// mongoClient, err := mongodb.InitMongoDB()
+	// if err != nil {
+	// 	log.Error("Error mongodb.InitMongoDB", "err", err)
+	// 	return
+	// }
+	// defer mongoClient.Disconnect(context.Background())
+
+	// // 定期检查mongo数据库健康状态
+	// go func() {
+	// 	for {
+	// 		time.Sleep(60 * time.Second)
+	// 		if !mongoClient.HealthCheck(rootCtx) {
+	// 			log.Warn("Trying to reconnect to MongoDB...")
+	// 			if err := mongoClient.Reconnect(rootCtx); err != nil {
+	// 				log.Error("Failed to reconnect to MongoDB", err.Error())
+	// 				exit()
+	// 			}
+	// 		}
+	// 	}
+	// }()
+
+	// init mysql
+	err = mysqldb.InitDB()
 	if err != nil {
-		log.Error("Error mongodb.InitMongoDB", "err", err)
+		log.Error("service.InitDB error", "message", err)
 		return
 	}
-	defer mongoClient.Disconnect(context.Background())
-
-	// 定期检查mongo数据库健康状态
-	go func() {
-		for {
-			time.Sleep(60 * time.Second)
-			if !mongoClient.HealthCheck(rootCtx) {
-				log.Warn("Trying to reconnect to MongoDB...")
-				if err := mongoClient.Reconnect(rootCtx); err != nil {
-					log.Error("Failed to reconnect to MongoDB", err.Error())
-					exit()
-				}
-			}
-		}
-	}()
 
 	err = service.InitLogicLocalCache(rootCtx)
 	if err != nil {
