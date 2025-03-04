@@ -164,7 +164,7 @@ func startReadQueue(ctx context.Context) {
 				// 业务逻辑
 				err := tryDoSeckill(ctx, lqs.SeckillID, lqs.UserID, lqs.SecKillTime)
 				if err != nil {
-					log.Error("startReadQueue business logic", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "err", err)
+					log.Warn("startReadQueue business logic", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "err", err)
 				}
 
 				done <- TryDoSeckillResult{err: err}
@@ -180,7 +180,7 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 	defer cancel()
 
 	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", seckillId, userId)
-	field := "status"
+	fieldStatus := "status"
 
 	wc := writeconcern.Majority()
 	txnOptions := options.Transaction().SetWriteConcern(wc)
@@ -262,9 +262,9 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 		log.Warn("tryDoSeckill WithTransaction", "err", err)
 		if tresult != nil {
 			status := tresult.(pb.InquireSeckillStatus)
-			innererr := redisop.HSet(ctx, keyticket, field, status.String())
+			innererr := redisop.HSet(ctx, keyticket, fieldStatus, status.String())
 			if innererr != nil {
-				log.Error("tryDoSeckill WithTransaction", "redisop.HSet", "err", innererr)
+				log.Error("tryDoSeckill WithTransaction redisop.HSet", "err", innererr)
 			}
 		}
 		return err
@@ -276,9 +276,17 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 	}
 
 	// 更新redis上的状态
-	err = redisop.HSet(ctx, keyticket, field, tresult.(pb.InquireSeckillStatus).String())
+	// 这里更新失败，用户得不到真正的秒杀结果
+	err = redisop.HSet(ctx, keyticket, fieldStatus, tresult.(pb.InquireSeckillStatus).String())
 	if err != nil {
 		log.Error("tryDoSeckill redisop.HSet", "err", err)
+		return err
+	}
+
+	// 更新缓存里面秒杀活动的库存，这里不要求强一致性，只是用来判断大概的库存情况
+	_, err = redisop.HIncrBy(ctx, fmt.Sprintf("seckill:%s", seckillId), "Remaining", -1)
+	if err != nil {
+		log.Error("tryDoSeckill redisop.HIncrBy", "err", err)
 		return err
 	}
 
