@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"math/rand"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,7 +18,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var MaxQueueSize = 1
+var MaxQueueSize = 20
+var LocalQueueSize = 10
+var RedisBatchSize = 5
 
 func InitLogicReadQueue(ctx context.Context, wgExit *sync.WaitGroup) {
 	defer wgExit.Done()
@@ -52,11 +55,11 @@ type TryDoSeckillResult struct {
 func startReadQueue(ctx context.Context) {
 	keyqueue := "seckill:queue"
 
-	localQueue := make(chan *LocalQueueSeckillJoin, 10)
+	localQueue := make(chan *LocalQueueSeckillJoin, LocalQueueSize)
 
 	readFromRedis := func() (bool, error) {
 		// 从redis读取数据
-		vals, err := redisop.LPopCount(ctx, keyqueue, 3)
+		vals, err := redisop.LPopCount(ctx, keyqueue, RedisBatchSize)
 		if err != nil {
 			if err == redis.Nil {
 				log.Debug("startReadQueue redisop.LPop", "keyqueue", keyqueue, "err", err)
@@ -125,9 +128,9 @@ func startReadQueue(ctx context.Context) {
 			var startRead <-chan time.Time
 			if done == nil {
 				if delay {
-					startRead = time.After(5000 * time.Millisecond)
+					startRead = time.After(500 * time.Millisecond)
 				} else {
-					startRead = time.After(10 * time.Millisecond)
+					startRead = time.After(5 * time.Millisecond)
 				}
 			}
 
@@ -143,7 +146,7 @@ func startReadQueue(ctx context.Context) {
 					}
 
 					if d {
-						log.Info("startReadQueue readFromRedis", "delay", d)
+						log.Debug("startReadQueue readFromRedis", "delay", d)
 					}
 					done <- ReadResult{delay: d, err: err}
 				}()
@@ -188,7 +191,6 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 	defer cancel()
 
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
-	fieldStatus := "status"
 	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
 	status, lastInsertID, err := executeTransaction(ctx, seckillId, userId, secKillTime)
@@ -197,7 +199,7 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 		log.Warn("tryDoSeckill Transaction", "err", err)
 		if status != pb.InquireSeckillStatus_IS_UNKNOWN {
 			// 更新redis上的状态
-			innererr := redisop.HSet(ctx, keyticket, fieldStatus, status.String())
+			innererr := redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+120)*time.Second)
 			if innererr != nil {
 				log.Error("tryDoSeckill WithTransaction redisop.HSet", "err", innererr)
 			}
@@ -210,7 +212,7 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 	if status != pb.InquireSeckillStatus_IS_SUCCESS {
 		log.Warn("tryDoSeckill Transaction", "status", status, "seckillId", seckillId, "userId", userId)
 		// 更新redis上的状态
-		err = redisop.HSet(ctx, keyticket, fieldStatus, status.String())
+		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+120)*time.Second)
 		if err != nil {
 			log.Error("tryDoSeckill redisop.HSet", "err", err)
 		}
@@ -231,7 +233,7 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 		}
 
 		// 更新redis上用户排队的状态
-		err = redisop.HSet(ctx, keyticket, fieldStatus, status.String())
+		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+120)*time.Second)
 		if err != nil {
 			log.Error("tryDoSeckill redisop.HSet", "err", err)
 		}
@@ -247,7 +249,8 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 }
 
 func executeTransaction(ctx context.Context, seckillId, userId, secKillTime int64) (pb.InquireSeckillStatus, int64, error) {
-	tx, err := mysqldb.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	// tx, err := mysqldb.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead})
+	tx, err := mysqldb.DB.BeginTx(ctx, &sql.TxOptions{})
 	if err != nil {
 		log.Error("tryDoSeckill BeginTx", "err", err)
 		return pb.InquireSeckillStatus_IS_UNKNOWN, 0, err

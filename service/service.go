@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/anchel/mini-seckill/lib/redisop"
 	"github.com/anchel/mini-seckill/mysqldb"
 	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/charmbracelet/log"
@@ -127,36 +128,27 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	// 加入队列
 	nowmill := time.Now().UnixMilli()
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
-	fieldCount := "count"
-	fieldStatus := "status"
 
 	keyqueue := "seckill:queue"
 	val := fmt.Sprintf("%d:%d:%d", req.SeckillID, req.UserID, nowmill)
 
-	cmds, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HIncrBy(ctx, keyticket, fieldCount, 1)
-		pipe.HSet(ctx, keyticket, fieldStatus, pb.InquireSeckillStatus_IS_QUEUEING.String()) // 默认状态是排队中
-		pipe.Expire(ctx, keyticket, time.Duration(rand.Intn(30)+60)*time.Second)
-		pipe.RPush(ctx, keyqueue, val)
+	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		ret := pipe.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_QUEUEING.String(), time.Duration(rand.Intn(30)+120)*time.Second)
+		if ret.Err() != nil {
+			log.Error("JoinSeckill redisclient.Rdb.Set", "err", ret.Err())
+			return ret.Err()
+		}
+		ret2 := pipe.RPush(ctx, keyqueue, val)
+		if ret2.Err() != nil {
+			log.Error("JoinSeckill redisclient.Rdb.RPush", "err", ret2.Err())
+			return ret2.Err()
+		}
 		return nil
 	})
 	if err != nil {
 		log.Error("JoinSeckill redisclient.Rdb.TxPipelined", "err", err)
 		return nil, err
 	}
-	if len(cmds) != 4 {
-		log.Error("JoinSeckill redisclient.Rdb.TxPipelined", "len(cmds)", len(cmds))
-		return nil, errors.New("len(cmds) != 3")
-	}
-
-	// 是否有必要依次检查每个命令的错误？
-	if cmd0 := cmds[0]; cmd0.Err() != nil {
-		log.Error("JoinSeckill redisclient.Rdb.HIncrBy", "err", cmd0.Err())
-		return nil, cmd0.Err()
-	}
-
-	count := cmds[0].(*redis.IntCmd).Val()
-	log.Info("JoinSeckill", "seckillid", req.SeckillID, "userid", req.UserID, "count", count)
 
 	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JOIN_SUCCESS}, nil
 }
@@ -174,9 +166,8 @@ type InquireSeckillResponse struct {
 // InquireSeckill 查询秒杀状态
 func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSeckillResponse, error) {
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
-	field2 := "status"
 
-	status, err := redisclient.Rdb.HGet(ctx, keyticket, field2).Result()
+	status, err := redisop.Get(ctx, keyticket, true)
 	if err != nil {
 		if err == redis.Nil {
 			// redis中没有记录，不一定是未参与，可能是已经过期，返回未参与状态，让用户重新加入队列也可以得到结果
@@ -211,9 +202,9 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 
 	// 缓存状态是排队中
 	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
-		maxPollCount := 10
+		maxPollCount := 120
 		for range maxPollCount {
-			status, err = redisclient.Rdb.HGet(ctx, keyticket, field2).Result()
+			status, err := redisop.Get(ctx, keyticket, false)
 			if err != nil {
 				if err == redis.Nil {
 					return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil

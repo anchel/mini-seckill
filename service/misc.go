@@ -147,12 +147,12 @@ func checkCanJoinSeckill(ctx context.Context, seckillID int64, userID int64) (pb
 
 	// 判断是否已加入过
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillID, userID)
-	fieldStatus := "status"
-	status, err := redisop.HGet(ctx, keyticket, fieldStatus, false)
+
+	status, err := redisop.Get(ctx, keyticket, false)
 	if err != nil {
-		log.Warn("checkCanJoinSeckill redisop.HGet", "err", err)
+		log.Warn("checkCanJoinSeckill redisop.Get", "err", err)
 	} else {
-		log.Info("checkCanJoinSeckill redisop.HGet", "status", status)
+		log.Info("checkCanJoinSeckill redisop.Get", "status", status)
 		// 如果是“排队中”，则返回加入成功，让前端继续轮询
 		// 此时不一定是真正在排队中，可能是数据库还为更新redis，不过此时继续轮询也没问题
 		if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
