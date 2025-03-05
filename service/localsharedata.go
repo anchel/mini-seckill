@@ -35,5 +35,5 @@ type LocalCacheSeckill struct {
 	StartTime int64 `json:"start_time"`
 	EndTime   int64 `json:"end_time"`
 	Finished  int32 `json:"finished"`
-	Remaining int64 `json:"remaining"` // 剩余数量，这个字段在这里只能是0，因为只有剩余数量为0时才会写入本地缓存，中间数量不写入
+	Remaining int64 `json:"remaining"`
 }

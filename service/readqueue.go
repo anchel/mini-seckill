@@ -18,8 +18,8 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var MaxQueueSize = 20
-var LocalQueueSize = 10
+var MaxQueueSize = 10
+var LocalQueueSize = 50
 var RedisBatchSize = 5
 
 func InitLogicReadQueue(ctx context.Context, wgExit *sync.WaitGroup) {
@@ -59,7 +59,7 @@ func startReadQueue(ctx context.Context) {
 
 	readFromRedis := func() (bool, error) {
 		// 从redis读取数据
-		vals, err := redisop.LPopCount(ctx, keyqueue, RedisBatchSize)
+		vals, err := redisop.LPopCount(ctx, keyqueue, RedisBatchSize, false)
 		if err != nil {
 			if err == redis.Nil {
 				log.Debug("startReadQueue redisop.LPop", "keyqueue", keyqueue, "err", err)
@@ -158,7 +158,7 @@ func startReadQueue(ctx context.Context) {
 	}()
 
 	var localQueueCond chan *LocalQueueSeckillJoin
-	var done chan TryDoSeckillResult
+	var done chan any
 
 	for {
 		if done == nil {
@@ -170,7 +170,7 @@ func startReadQueue(ctx context.Context) {
 			return
 		case lqs := <-localQueueCond:
 			log.Info("startReadQueue <-localQueue", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime)
-			done = make(chan TryDoSeckillResult, 1)
+			done = make(chan any, 1)
 			go func() {
 				// 业务逻辑
 				err := tryDoSeckill(ctx, lqs.SeckillID, lqs.UserID, lqs.SecKillTime)
@@ -178,7 +178,7 @@ func startReadQueue(ctx context.Context) {
 					log.Warn("startReadQueue business logic", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "err", err)
 				}
 
-				done <- TryDoSeckillResult{err: err}
+				done <- struct{}{}
 			}()
 		case <-done:
 			done = nil
@@ -191,6 +191,32 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 	defer cancel()
 
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
+
+	// 从本地缓存来判断秒杀活动的状态
+	ldata, ok := SeckillInfoLocalCacheMap.Load(seckillId)
+	if ok {
+		log.Info("tryDoSeckill seckill found in localcache", "SeckillID", seckillId)
+		lcsk := ldata.(*LocalCacheSeckill)
+
+		if lcsk.Remaining <= 0 {
+			log.Info("tryDoSeckill localcache Remaining <= 0", "SeckillID", seckillId)
+			err := redisop.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_FAILED.String(), time.Duration(rand.Intn(30)+80)*time.Second)
+			if err != nil {
+				log.Error("tryDoSeckill redisop.HSet", "err", err)
+			}
+			return nil
+		}
+	} else {
+		log.Debug("tryDoSeckill seckill not found in localcache", "SeckillID", seckillId)
+	}
+
+	// TODO: just for test, remember to remove
+	// err := redisop.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_FAILED.String(), time.Duration(rand.Intn(30)+80)*time.Second)
+	// if err != nil {
+	// 	log.Error("tryDoSeckill redisop.HSet", "err", err)
+	// }
+	// return nil
+
 	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
 	status, lastInsertID, err := executeTransaction(ctx, seckillId, userId, secKillTime)
@@ -199,7 +225,7 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 		log.Warn("tryDoSeckill Transaction", "err", err)
 		if status != pb.InquireSeckillStatus_IS_UNKNOWN {
 			// 更新redis上的状态
-			innererr := redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+120)*time.Second)
+			innererr := redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second)
 			if innererr != nil {
 				log.Error("tryDoSeckill WithTransaction redisop.HSet", "err", innererr)
 			}
@@ -212,12 +238,25 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 	if status != pb.InquireSeckillStatus_IS_SUCCESS {
 		log.Warn("tryDoSeckill Transaction", "status", status, "seckillId", seckillId, "userId", userId)
 		// 更新redis上的状态
-		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+120)*time.Second)
+		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second)
 		if err != nil {
 			log.Error("tryDoSeckill redisop.HSet", "err", err)
 		}
 		return nil
 	}
+
+	// 更新本地缓存，加快性能
+	doc, err := mysqldb.QuerySeckillByID(ctx, seckillId, true)
+	if err != nil {
+		log.Error("tryDoSeckill mysqldb.QuerySeckillByID", "err", err)
+		return err
+	}
+	SeckillInfoLocalCacheMap.Store(seckillId, &LocalCacheSeckill{
+		StartTime: doc.StartTime.UnixMilli(),
+		EndTime:   doc.EndTime.UnixMilli(),
+		Remaining: doc.Remaining,
+		Finished:  doc.Finished,
+	})
 
 	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		// 更新缓存里面秒杀活动的库存，这里不要求强一致性，只是用来判断大概的库存情况
@@ -233,7 +272,7 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 		}
 
 		// 更新redis上用户排队的状态
-		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+120)*time.Second)
+		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second)
 		if err != nil {
 			log.Error("tryDoSeckill redisop.HSet", "err", err)
 		}

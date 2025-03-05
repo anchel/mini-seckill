@@ -12,7 +12,7 @@ import (
 func Del(ctx context.Context, key string) (int64, error) {
 	val, err := redisclient.Rdb.Del(ctx, key).Result()
 	if err != nil {
-		log.Debug("redisop Del", "key", key, "err", err)
+		log.Error("redisop Del", "key", key, "err", err)
 		return 0, err
 	}
 	return val, nil
@@ -21,7 +21,7 @@ func Del(ctx context.Context, key string) (int64, error) {
 func Set(ctx context.Context, key string, value any, expiration time.Duration) error {
 	_, err := redisclient.Rdb.Set(ctx, key, value, expiration).Result()
 	if err != nil {
-		log.Debug("redisop Set", "key", key, "err", err)
+		log.Error("redisop Set", "key", key, "err", err)
 		return err
 	}
 	return nil
@@ -33,7 +33,7 @@ func Get(ctx context.Context, key string, nilIsError bool) (string, error) {
 		if err == redis.Nil && !nilIsError {
 			return "", nil
 		}
-		log.Debug("redisop Get", "key", key, "err", err)
+		log.Error("redisop Get", "key", key, "err", err)
 		return "", err
 	}
 	return val, nil
@@ -42,7 +42,7 @@ func Get(ctx context.Context, key string, nilIsError bool) (string, error) {
 func SetNX(ctx context.Context, key string, value any, expiration time.Duration) (bool, error) {
 	result, err := redisclient.Rdb.SetNX(ctx, key, value, expiration).Result()
 	if err != nil {
-		log.Debug("redisop SetNX", "key", key, "err", err)
+		log.Error("redisop SetNX", "key", key, "err", err)
 		return false, err
 	}
 	return result, nil
@@ -51,7 +51,7 @@ func SetNX(ctx context.Context, key string, value any, expiration time.Duration)
 func HSet(ctx context.Context, key, field string, value any) error {
 	_, err := redisclient.Rdb.HSet(ctx, key, field, value).Result()
 	if err != nil {
-		log.Debug("redisop HSet", "key", key, "field", field, "err", err)
+		log.Error("redisop HSet", "key", key, "field", field, "err", err)
 		return err
 	}
 	return nil
@@ -60,7 +60,7 @@ func HSet(ctx context.Context, key, field string, value any) error {
 func HSetNX(ctx context.Context, key, field string, value any) (bool, error) {
 	result, err := redisclient.Rdb.HSetNX(ctx, key, field, value).Result()
 	if err != nil {
-		log.Debug("redisop HSetNX", "key", key, "field", field, "err", err)
+		log.Error("redisop HSetNX", "key", key, "field", field, "err", err)
 		return false, err
 	}
 	return result, nil
@@ -69,7 +69,7 @@ func HSetNX(ctx context.Context, key, field string, value any) (bool, error) {
 func HMSet(ctx context.Context, key string, fields map[string]any) error {
 	_, err := redisclient.Rdb.HMSet(ctx, key, fields).Result()
 	if err != nil {
-		log.Debug("redisop HMSet", "key", key, "err", err)
+		log.Error("redisop HMSet", "key", key, "err", err)
 	}
 	return err
 }
@@ -80,7 +80,7 @@ func HGet(ctx context.Context, key, field string, nilIsError bool) (string, erro
 		if err == redis.Nil && !nilIsError {
 			return "", nil
 		}
-		log.Debug("redisop HGet", "key", key, "field", field, "err", err)
+		log.Error("redisop HGet", "key", key, "field", field, "err", err)
 		return "", err
 	}
 	return val, nil
@@ -89,7 +89,7 @@ func HGet(ctx context.Context, key, field string, nilIsError bool) (string, erro
 func HMGet(ctx context.Context, key string, fields ...string) ([]interface{}, error) {
 	val, err := redisclient.Rdb.HMGet(ctx, key, fields...).Result()
 	if err != nil {
-		log.Debug("redisop HMGet", "key", key, "fields", fields, "err", err)
+		log.Error("redisop HMGet", "key", key, "fields", fields, "err", err)
 		return nil, err
 	}
 	return val, nil
@@ -98,7 +98,7 @@ func HMGet(ctx context.Context, key string, fields ...string) ([]interface{}, er
 func HIncrBy(ctx context.Context, key, field string, incr int64) (int64, error) {
 	val, err := redisclient.Rdb.HIncrBy(ctx, key, field, incr).Result()
 	if err != nil {
-		log.Debug("redisop HIncrBy", "key", key, "field", field, "incr", incr, "err", err)
+		log.Error("redisop HIncrBy", "key", key, "field", field, "incr", incr, "err", err)
 		return 0, err
 	}
 	return val, nil
@@ -107,25 +107,19 @@ func HIncrBy(ctx context.Context, key, field string, incr int64) (int64, error) 
 func RPush(ctx context.Context, key string, value any) error {
 	_, err := redisclient.Rdb.RPush(ctx, key, value).Result()
 	if err != nil {
-		log.Debug("redisop RPush", "key", key, "err", err)
+		log.Error("redisop RPush", "key", key, "err", err)
 		return err
 	}
 	return nil
 }
 
-// func LPop(ctx context.Context, key string) (string, error) {
-// 	val, err := redisclient.Rdb.LPop(ctx, key).Result()
-// 	if err != nil {
-// 		log.Debug("redisop LPop", "key", key, "err", err)
-// 		return "", err
-// 	}
-// 	return val, nil
-// }
-
-func LPopCount(ctx context.Context, key string, count int) ([]string, error) {
+func LPopCount(ctx context.Context, key string, count int, nilIsError bool) ([]string, error) {
 	val, err := redisclient.Rdb.LPopCount(ctx, key, count).Result()
 	if err != nil {
-		log.Debug("redisop LPopCount", "key", key, "count", count, "err", err)
+		if err == redis.Nil && !nilIsError {
+			return nil, nil
+		}
+		log.Error("redisop LPopCount", "key", key, "count", count, "err", err)
 		return nil, err
 	}
 	return val, nil
@@ -134,7 +128,7 @@ func LPopCount(ctx context.Context, key string, count int) ([]string, error) {
 func SIsMember(ctx context.Context, key string, member any) (bool, error) {
 	val, err := redisclient.Rdb.SIsMember(ctx, key, member).Result()
 	if err != nil {
-		log.Debug("redisop SIsMember", "key", key, "member", member, "err", err)
+		log.Error("redisop SIsMember", "key", key, "member", member, "err", err)
 		return false, err
 	}
 	return val, nil
@@ -143,7 +137,7 @@ func SIsMember(ctx context.Context, key string, member any) (bool, error) {
 func SAdd(ctx context.Context, key string, members ...any) error {
 	_, err := redisclient.Rdb.SAdd(ctx, key, members...).Result()
 	if err != nil {
-		log.Debug("redisop SAdd", "key", key, "members", members, "err", err)
+		log.Error("redisop SAdd", "key", key, "members", members, "err", err)
 		return err
 	}
 	return nil

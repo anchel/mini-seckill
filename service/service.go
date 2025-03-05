@@ -133,14 +133,14 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	val := fmt.Sprintf("%d:%d:%d", req.SeckillID, req.UserID, nowmill)
 
 	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		ret := pipe.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_QUEUEING.String(), time.Duration(rand.Intn(30)+120)*time.Second)
+		ret := pipe.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_QUEUEING.String(), time.Duration(rand.Intn(30)+80)*time.Second)
 		if ret.Err() != nil {
-			log.Error("JoinSeckill redisclient.Rdb.Set", "err", ret.Err())
+			log.Error("JoinSeckill pipe.Set", "err", ret.Err())
 			return ret.Err()
 		}
 		ret2 := pipe.RPush(ctx, keyqueue, val)
 		if ret2.Err() != nil {
-			log.Error("JoinSeckill redisclient.Rdb.RPush", "err", ret2.Err())
+			log.Error("JoinSeckill pipe.RPush", "err", ret2.Err())
 			return ret2.Err()
 		}
 		return nil
@@ -174,7 +174,7 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 			// 如果用户不再次加入队列，如何获取真实状态？
 			return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil
 		}
-		log.Error("InquireSeckill redisclient.Rdb.HGet", "err", err)
+		log.Error("InquireSeckill redisop.Get", "err", err)
 		return nil, err
 	}
 
@@ -209,14 +209,15 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 				if err == redis.Nil {
 					return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil
 				}
-				log.Error("InquireSeckill redisclient.Rdb.HGet", "err", err)
+				log.Error("InquireSeckill redisop.Get", "err", err)
 				return nil, err
 			}
 			log.Info("InquireSeckill loop", "status", status)
 			if status != pb.InquireSeckillStatus_IS_QUEUEING.String() {
 				return &InquireSeckillResponse{Status: pb.InquireSeckillStatus(pb.InquireSeckillStatus_value[status])}, nil
 			}
-			time.Sleep(1000 * time.Millisecond) // sleep 1000ms
+			d := time.Duration(rand.Intn(2000)+2000) * time.Millisecond
+			time.Sleep(d) // sleep 1000ms
 		}
 	}
 
