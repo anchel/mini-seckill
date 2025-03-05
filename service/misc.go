@@ -2,21 +2,19 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/anchel/mini-seckill/lib/redisop"
-	"github.com/anchel/mini-seckill/mongodb"
+	"github.com/anchel/mini-seckill/mysqldb"
 	pb "github.com/anchel/mini-seckill/proto"
-	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/charmbracelet/log"
 	"github.com/redis/go-redis/v9"
 )
 
 type CacheSeckill struct {
-	Id        string     `json:"id"`
+	Id        int64      `json:"id"`
 	Name      string     `json:"name"`
 	StartTime int64      `json:"start_time"`
 	EndTime   int64      `json:"end_time"`
@@ -27,10 +25,10 @@ type CacheSeckill struct {
 }
 
 func writeSeckillToRedis(ctx context.Context, sk *CacheSeckill) error {
-	now := time.Now()
-	key := "seckill:" + sk.Id
+	// now := time.Now()
+	key := fmt.Sprintf("seckill:info:%d", sk.Id)
 
-	expiration := time.UnixMilli(sk.EndTime).Sub(now)
+	// expiration := time.UnixMilli(sk.EndTime).Sub(now)
 
 	vals := map[string]interface{}{
 		"StartTime": sk.StartTime, // 开始时间
@@ -40,19 +38,25 @@ func writeSeckillToRedis(ctx context.Context, sk *CacheSeckill) error {
 		"Finished":  sk.Finished,  // 是否已结束，这是一个开关，不是根据剩余数量计算的
 	}
 
-	cmds, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		pipe.HMSet(ctx, key, vals)
-		pipe.Expire(ctx, key, expiration)
-		return nil
-	})
+	err := redisop.HMSet(ctx, key, vals)
 	if err != nil {
-		log.Warn("writeSeckillToRedis redisclient.Rdb.TxPipelined", "err", err)
+		log.Warn("writeSeckillToRedis redisop.HMSet", "err", err)
 		return err
 	}
-	if len(cmds) != 2 {
-		log.Warn("writeSeckillToRedis redisclient.Rdb.TxPipelined", "len(cmds)", len(cmds))
-		return errors.New("writeSeckillToRedis len(cmds) != 3")
-	}
+
+	// cmds, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+	// 	pipe.HMSet(ctx, key, vals)
+	// 	pipe.Expire(ctx, key, expiration)
+	// 	return nil
+	// })
+	// if err != nil {
+	// 	log.Warn("writeSeckillToRedis redisclient.Rdb.TxPipelined", "err", err)
+	// 	return err
+	// }
+	// if len(cmds) != 2 {
+	// 	log.Warn("writeSeckillToRedis redisclient.Rdb.TxPipelined", "len(cmds)", len(cmds))
+	// 	return errors.New("writeSeckillToRedis len(cmds) != 3")
+	// }
 	return nil
 }
 
@@ -68,7 +72,7 @@ func checkSeckillNoRemaining(Remaining int64) bool {
 	return Remaining <= 0
 }
 
-func checkCanJoinSeckill(ctx context.Context, seckillID string, userID string) (pb.JoinSeckillStatus, error) {
+func checkCanJoinSeckill(ctx context.Context, seckillID int64, userID int64) (pb.JoinSeckillStatus, error) {
 
 	ldata, ok := SeckillInfoLocalCacheMap.Load(seckillID)
 	if ok {
@@ -76,17 +80,18 @@ func checkCanJoinSeckill(ctx context.Context, seckillID string, userID string) (
 		lcsk := ldata.(*LocalCacheSeckill)
 
 		if checkSeckillEnd(lcsk.Finished, lcsk.EndTime) {
-			return pb.JoinSeckillStatus_JS_FINISHED, nil
+			return pb.JoinSeckillStatus_JOIN_FINISHED, nil
 		}
 		if checkSeckillNotStart(lcsk.StartTime) {
-			return pb.JoinSeckillStatus_JS_NOT_START, nil
+			return pb.JoinSeckillStatus_JOIN_NOT_START, nil
 		}
 	}
 
-	// 从redis读取来判断
+	// 从redis来判断秒杀活动的状态
 	fields := []string{"StartTime", "EndTime", "Remaining", "Finished"}
+	key := fmt.Sprintf("seckill:info:%d", seckillID)
 	length := len(fields)
-	vals, e := redisop.HMGet(ctx, "seckill:"+seckillID, fields...)
+	vals, e := redisop.HMGet(ctx, key, fields...)
 	if e != nil {
 		if e == redis.Nil {
 			log.Info("checkCanJoinSeckill seckill not found in redis", "SeckillID", seckillID)
@@ -106,21 +111,21 @@ func checkCanJoinSeckill(ctx context.Context, seckillID string, userID string) (
 				finished, e1 := strconv.ParseInt(Finished, 10, 32)
 				endTime, e2 := strconv.ParseInt(EndTime, 10, 64)
 				if e1 == nil && e2 == nil && checkSeckillEnd(int32(finished), endTime) {
-					return pb.JoinSeckillStatus_JS_FINISHED, nil
+					return pb.JoinSeckillStatus_JOIN_FINISHED, nil
 				}
 			}
 
 			if okStartTime {
 				startTime, e := strconv.ParseInt(StartTime, 10, 64)
 				if e == nil && checkSeckillNotStart(startTime) {
-					return pb.JoinSeckillStatus_JS_NOT_START, nil
+					return pb.JoinSeckillStatus_JOIN_NOT_START, nil
 				}
 			}
 
 			if okRemaining {
 				remaining, e := strconv.ParseInt(Remaining, 10, 64)
 				if e == nil && checkSeckillNoRemaining(remaining) {
-					return pb.JoinSeckillStatus_JS_EMPTY, nil
+					return pb.JoinSeckillStatus_JOIN_NO_REMAINING, nil
 				}
 			}
 		} else {
@@ -128,8 +133,20 @@ func checkCanJoinSeckill(ctx context.Context, seckillID string, userID string) (
 		}
 	}
 
+	// 判断是否已秒杀成功
+	keyusers := fmt.Sprintf("seckill:users:%d", seckillID)
+	success, err := redisop.SIsMember(ctx, keyusers, userID)
+	if err != nil {
+		log.Warn("checkCanJoinSeckill redisop.SIsMember", "err", err)
+	} else {
+		if success {
+			log.Info("checkCanJoinSeckill redisop.SIsMember", "SeckillID", seckillID, "UserID", userID, "success", success)
+			return pb.JoinSeckillStatus_JOIN_IN_USERS_LIST, nil
+		}
+	}
+
 	// 判断是否已加入过
-	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", seckillID, userID)
+	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillID, userID)
 	fieldStatus := "status"
 	status, err := redisop.HGet(ctx, keyticket, fieldStatus, false)
 	if err != nil {
@@ -139,32 +156,32 @@ func checkCanJoinSeckill(ctx context.Context, seckillID string, userID string) (
 		// 如果是“排队中”，则返回加入成功，让前端继续轮询
 		// 此时不一定是真正在排队中，可能是数据库还为更新redis，不过此时继续轮询也没问题
 		if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
-			return pb.JoinSeckillStatus_JS_SUCCESS, nil
+			return pb.JoinSeckillStatus_JOIN_SUCCESS, nil
 		} else if status != "" {
-			return pb.JoinSeckillStatus_JS_FAILED, nil // 要么是秒杀成功或秒杀失败了，或者是其他状态
+			return pb.JoinSeckillStatus_JOIN_FAILED, nil // 要么是秒杀成功或秒杀失败了，或者是其他状态
 		}
 	}
 
-	// 去数据库查询该秒杀活动的一些状态
-	doc, err := mongodb.ModelSecKill.FindByID(ctx, seckillID)
+	// 从数据库来判断秒杀活动的状态
+	doc, err := mysqldb.QuerySeckillByID(ctx, seckillID, false)
 	if err != nil {
-		log.Error("checkCanJoinSeckill mongodb.ModelSecKill.FindByID", "err", err)
-		return pb.JoinSeckillStatus_JS_UNKNOWN, err
+		log.Error("checkCanJoinSeckill QuerySeckillByID", "err", err)
+		return pb.JoinSeckillStatus_JOIN_UNKNOWN, err
 	}
 	if doc == nil {
 		log.Info("checkCanJoinSeckill not found in database", "id", seckillID)
-		return pb.JoinSeckillStatus_JS_UNKNOWN, errors.New("seckill not found")
+		return pb.JoinSeckillStatus_JOIN_UNKNOWN, nil
 	}
 
-	if checkSeckillEnd(doc.Finished, doc.EndTime) {
-		return pb.JoinSeckillStatus_JS_FINISHED, nil
+	if checkSeckillEnd(doc.Finished, doc.EndTime.UnixMilli()) {
+		return pb.JoinSeckillStatus_JOIN_FINISHED, nil
 	}
-	if checkSeckillNotStart(doc.StartTime) {
-		return pb.JoinSeckillStatus_JS_NOT_START, nil
+	if checkSeckillNotStart(doc.StartTime.UnixMilli()) {
+		return pb.JoinSeckillStatus_JOIN_NOT_START, nil
 	}
 	if checkSeckillNoRemaining(doc.Remaining) {
-		return pb.JoinSeckillStatus_JS_EMPTY, nil
+		return pb.JoinSeckillStatus_JOIN_NO_REMAINING, nil
 	}
 
-	return pb.JoinSeckillStatus_JS_UNKNOWN, nil
+	return pb.JoinSeckillStatus_JOIN_UNKNOWN, nil
 }

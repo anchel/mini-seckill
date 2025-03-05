@@ -16,7 +16,7 @@ type EntitySeckill struct {
 	DeleteAt    time.Time `json:"delete_at"`
 }
 
-type EntitySeckillUser struct {
+type EntitySeckillOrder struct {
 	ID        int64     `json:"id"`
 	SeckillID int64     `json:"seckill_id"`
 	UserID    int64     `json:"user_id"`

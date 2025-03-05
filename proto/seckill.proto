@@ -55,17 +55,18 @@ message GetSeckillResponse {
 }
 
 enum JoinSeckillStatus {
-    JS_UNKNOWN = 0;
-    JS_NOT_START = 1; // 未开始
-    JS_FINISHED = 2; // 已结束
-    JS_EMPTY = 3; // 已抢空
-    JS_SUCCESS = 4; // 加入成功
-    JS_FAILED = 5; // 加入失败
+    JOIN_UNKNOWN = 0;
+    JOIN_NOT_START = 1; // 未开始
+    JOIN_FINISHED = 2; // 已结束
+    JOIN_NO_REMAINING = 3; // 已抢空
+    JOIN_IN_USERS_LIST = 4; // 已在成功用户列表中
+    JOIN_SUCCESS = 5; // 加入成功
+    JOIN_FAILED = 6; // 加入失败
 }
 
 message JoinSeckillRequest {
-    string seckill_id = 1;
-    string user_id = 2;
+    int64 seckill_id = 1;
+    int64 user_id = 2;
 }
 
 message JoinSeckillResponse {
@@ -81,21 +82,21 @@ enum InquireSeckillStatus {
 }
 
 message InquireSeckillRequest {
-    string seckill_id = 1;
-    string user_id = 2;
+    int64 seckill_id = 1;
+    int64 user_id = 2;
 }
 
 message InquireSeckillResponse {
     InquireSeckillStatus status = 1;
-    string order_id = 2;
+    int64 order_id = 2;
 }
 
 message CheckSeckillResultRequest {
-    string seckill_id = 1;
-    string user_id = 2;
+    int64 seckill_id = 1;
+    int64 user_id = 2;
 }
 
 message CheckSeckillResultResponse {
     bool success = 1;
-    string order_id = 2;
+    int64 order_id = 2;
 }

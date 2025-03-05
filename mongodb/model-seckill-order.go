@@ -11,7 +11,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-type EntitySecKillResult struct {
+type EntitySecKillOrder struct {
 	EntityBase `bson:",inline"`
 
 	ID primitive.ObjectID `json:"id,omitempty" bson:"_id,omitempty"`
@@ -23,23 +23,23 @@ type EntitySecKillResult struct {
 }
 
 // 实现 ModelEntier 接口
-func (e *EntitySecKillResult) GetCreatedAt() time.Time {
+func (e *EntitySecKillOrder) GetCreatedAt() time.Time {
 	return e.CreatedAt
 }
 
-func (e *EntitySecKillResult) SetCreatedAt(t time.Time) {
+func (e *EntitySecKillOrder) SetCreatedAt(t time.Time) {
 	e.CreatedAt = t
 }
 
-var ModelSecKillResult *ModelBase[EntitySecKillResult, *EntitySecKillResult]
+var ModelSecKillOrder *ModelBase[EntitySecKillOrder, *EntitySecKillOrder]
 
 func init() {
 	AddModelInitFunc(func(client *MongoClient) error {
-		log.Info("init mongodb model seckill_result")
+		log.Info("init mongodb model seckill_order")
 
-		collectionName := "seckill_result"
+		collectionName := "seckill_order"
 
-		ModelSecKillResult = NewModelBase[EntitySecKillResult, *EntitySecKillResult](collectionName)
+		ModelSecKillOrder = NewModelBase[EntitySecKillOrder, *EntitySecKillOrder](collectionName)
 
 		// 检查索引是否存在
 		collection, err := mongoClient.GetCollection(collectionName)

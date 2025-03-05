@@ -8,12 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/anchel/mini-seckill/mongodb"
 	"github.com/anchel/mini-seckill/mysqldb"
 	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/charmbracelet/log"
 	"github.com/redis/go-redis/v9"
-	"go.mongodb.org/mongo-driver/bson"
 
 	pb "github.com/anchel/mini-seckill/proto"
 )
@@ -36,21 +34,6 @@ func CreateSeckill(ctx context.Context, req *CreateSeckillRequest) (*CreateSecki
 		return nil, errors.New("end_time is invalid")
 	}
 
-	// doc := &mongodb.EntitySecKill{
-	// 	Name:      req.Name,
-	// 	Desc:      req.Description,
-	// 	StartTime: req.StartTime,
-	// 	EndTime:   req.EndTime,
-	// 	Total:     req.Total,
-	// 	Remaining: req.Total,
-	// 	Finished:  0,
-	// }
-	// id, err := mongodb.ModelSecKill.InsertOne(ctx, doc)
-	// if err != nil {
-	// 	log.Error("CreateSeckill mongodb.ModelSecKill.InsertOne", "err", err)
-	// 	return nil, err
-	// }
-
 	id, err := mysqldb.InsertSeckill(ctx, &mysqldb.EntitySeckill{
 		Name:        req.Name,
 		Description: req.Description,
@@ -64,7 +47,7 @@ func CreateSeckill(ctx context.Context, req *CreateSeckillRequest) (*CreateSecki
 
 	// write to redis
 	err = writeSeckillToRedis(ctx, &CacheSeckill{
-		Id:        fmt.Sprintf("%d", id),
+		Id:        id,
 		StartTime: req.StartTime,
 		EndTime:   req.EndTime,
 		Total:     req.Total,
@@ -98,16 +81,6 @@ type GetSeckillResponse struct {
 // GetSeckill gets a seckill activity
 func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillResponse, error) {
 
-	// doc, err := mongodb.ModelSecKill.FindByID(ctx, req.Id)
-	// if err != nil {
-	// 	log.Error("GetSeckill mongodb.ModelSecKill.FindByID", "err", err)
-	// 	return nil, err
-	// }
-	// if doc == nil {
-	// 	log.Info("GetSeckill not found in database", "id", req.Id)
-	// 	return nil, nil
-	// }
-
 	doc, err := mysqldb.QuerySeckillByID(ctx, req.Id, true)
 	if err != nil {
 		log.Error("GetSeckill mysqldb.QuerySeckillByID", "err", err)
@@ -128,8 +101,8 @@ func GetSeckill(ctx context.Context, req *GetSeckillRequest) (*GetSeckillRespons
 }
 
 type JoinSeckillRequest struct {
-	SeckillID string
-	UserID    string
+	SeckillID int64
+	UserID    int64
 }
 
 type JoinSeckillResponse struct {
@@ -147,18 +120,18 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 		return nil, err
 	}
 
-	if status != pb.JoinSeckillStatus_JS_UNKNOWN {
+	if status != pb.JoinSeckillStatus_JOIN_UNKNOWN {
 		return &JoinSeckillResponse{Status: status}, nil
 	}
 
 	// 加入队列
 	nowmill := time.Now().UnixMilli()
-	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", req.SeckillID, req.UserID)
+	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
 	fieldCount := "count"
 	fieldStatus := "status"
 
 	keyqueue := "seckill:queue"
-	val := fmt.Sprintf("%s:%s:%d", req.SeckillID, req.UserID, nowmill)
+	val := fmt.Sprintf("%d:%d:%d", req.SeckillID, req.UserID, nowmill)
 
 	cmds, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		pipe.HIncrBy(ctx, keyticket, fieldCount, 1)
@@ -185,22 +158,22 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	count := cmds[0].(*redis.IntCmd).Val()
 	log.Info("JoinSeckill", "seckillid", req.SeckillID, "userid", req.UserID, "count", count)
 
-	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JS_SUCCESS}, nil
+	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JOIN_SUCCESS}, nil
 }
 
 type InquireSeckillRequest struct {
-	SeckillID string
-	UserID    string
+	SeckillID int64
+	UserID    int64
 }
 
 type InquireSeckillResponse struct {
 	Status  pb.InquireSeckillStatus
-	OrderId string
+	OrderId int64
 }
 
 // InquireSeckill 查询秒杀状态
 func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSeckillResponse, error) {
-	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", req.SeckillID, req.UserID)
+	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
 	field2 := "status"
 
 	status, err := redisclient.Rdb.HGet(ctx, keyticket, field2).Result()
@@ -218,20 +191,17 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 
 	// 缓存状态是秒杀成功
 	if status == pb.InquireSeckillStatus_IS_SUCCESS.String() {
-		filter := bson.D{
-			{Key: "seckill_id", Value: req.SeckillID},
-			{Key: "user_id", Value: req.UserID},
-		}
-		doc, err := mongodb.ModelSecKillResult.FindOne(ctx, filter)
+
+		doc, err := mysqldb.QuerySeckillOrder(ctx, req.SeckillID, req.UserID, false)
 		if err != nil {
-			log.Error("InquireSeckill mongodb.ModelSecKillResult.FindOne", "seckill_id", req.SeckillID, "user_id", req.UserID, "err", err)
+			log.Error("InquireSeckill mysqldb.QuerySeckillOrder", "seckill_id", req.SeckillID, "user_id", req.UserID, "err", err)
 			return nil, err
 		}
 
 		if doc == nil {
 			return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_FAILED}, nil
 		}
-		return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_SUCCESS, OrderId: doc.ID.Hex()}, nil
+		return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_SUCCESS, OrderId: doc.ID}, nil
 	}
 
 	// 缓存状态是秒杀失败
@@ -263,23 +233,20 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 }
 
 type CheckSeckillResultRequest struct {
-	SeckillID string
-	UserID    string
+	SeckillID int64
+	UserID    int64
 }
 
 type CheckSeckillResultResponse struct {
 	Success bool
-	OrderId string
+	OrderId int64
 }
 
 func CheckSeckillResult(ctx context.Context, req *CheckSeckillResultRequest) (*CheckSeckillResultResponse, error) {
-	filter := bson.D{
-		{Key: "seckill_id", Value: req.SeckillID},
-		{Key: "user_id", Value: req.UserID},
-	}
-	doc, err := mongodb.ModelSecKillResult.FindOne(ctx, filter)
+
+	doc, err := mysqldb.QuerySeckillOrder(ctx, req.SeckillID, req.UserID, false)
 	if err != nil {
-		log.Error("CheckSeckillResult mongodb.ModelSecKillResult.FindOne", "seckill_id", req.SeckillID, "user_id", req.UserID, "err", err)
+		log.Error("CheckSeckillResult mysqldb.QuerySeckillOrder", "seckill_id", req.SeckillID, "user_id", req.UserID, "err", err)
 		return nil, err
 	}
 
@@ -287,5 +254,5 @@ func CheckSeckillResult(ctx context.Context, req *CheckSeckillResultRequest) (*C
 		return &CheckSeckillResultResponse{Success: false}, nil
 	}
 
-	return &CheckSeckillResultResponse{Success: true, OrderId: doc.ID.Hex()}, nil
+	return &CheckSeckillResultResponse{Success: true, OrderId: doc.ID}, nil
 }

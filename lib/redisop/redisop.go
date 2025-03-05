@@ -130,3 +130,21 @@ func LPopCount(ctx context.Context, key string, count int) ([]string, error) {
 	}
 	return val, nil
 }
+
+func SIsMember(ctx context.Context, key string, member any) (bool, error) {
+	val, err := redisclient.Rdb.SIsMember(ctx, key, member).Result()
+	if err != nil {
+		log.Debug("redisop SIsMember", "key", key, "member", member, "err", err)
+		return false, err
+	}
+	return val, nil
+}
+
+func SAdd(ctx context.Context, key string, members ...any) error {
+	_, err := redisclient.Rdb.SAdd(ctx, key, members...).Result()
+	if err != nil {
+		log.Debug("redisop SAdd", "key", key, "members", members, "err", err)
+		return err
+	}
+	return nil
+}

@@ -82,10 +82,12 @@ func (s *SeckillServer) GetSeckill(ctx context.Context, in *pb.GetSeckillRequest
 // JoinSeckill 加入秒杀活动
 func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillRequest) (*pb.JoinSeckillResponse, error) {
 	log.Infof("JoinSeckill Received: %v", in)
-	if in.SeckillId == "" {
+	if in.SeckillId == 0 {
+		log.Error("SeckillId is empty")
 		return nil, errors.New("SeckillId is empty")
 	}
-	if in.UserId == "" {
+	if in.UserId == 0 {
+		log.Error("UserId is empty")
 		return nil, errors.New("UserId is empty")
 	}
 
@@ -106,10 +108,12 @@ func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillReque
 // InquireSeckill 查询秒杀状态
 func (s *SeckillServer) InquireSeckill(ctx context.Context, in *pb.InquireSeckillRequest) (*pb.InquireSeckillResponse, error) {
 	log.Infof("InquireSeckill Received: %v", in)
-	if in.SeckillId == "" {
+	if in.SeckillId == 0 {
+		log.Error("SeckillId is empty")
 		return nil, errors.New("SeckillId is empty")
 	}
-	if in.UserId == "" {
+	if in.UserId == 0 {
+		log.Error("UserId is empty")
 		return nil, errors.New("UserId is empty")
 	}
 

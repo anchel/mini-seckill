@@ -2,7 +2,7 @@ package service
 
 import (
 	"context"
-	"errors"
+	"database/sql"
 	"fmt"
 	"strconv"
 	"strings"
@@ -10,15 +10,11 @@ import (
 	"time"
 
 	"github.com/anchel/mini-seckill/lib/redisop"
-	"github.com/anchel/mini-seckill/mongodb"
+	"github.com/anchel/mini-seckill/mysqldb"
 	pb "github.com/anchel/mini-seckill/proto"
+	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/charmbracelet/log"
 	"github.com/redis/go-redis/v9"
-	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
 var MaxQueueSize = 1
@@ -39,9 +35,9 @@ func InitLogicReadQueue(ctx context.Context, wgExit *sync.WaitGroup) {
 }
 
 type LocalQueueSeckillJoin struct {
-	SeckillID   string `json:"seckill_id"`
-	UserID      string `json:"user_id"`
-	SecKillTime int64  `json:"seckill_time"`
+	SeckillID   int64 `json:"seckill_id"`
+	UserID      int64 `json:"user_id"`
+	SecKillTime int64 `json:"seckill_time"`
 }
 
 type ReadResult struct {
@@ -60,7 +56,7 @@ func startReadQueue(ctx context.Context) {
 
 	readFromRedis := func() (bool, error) {
 		// 从redis读取数据
-		vals, err := redisop.LPopCount(ctx, keyqueue, 5)
+		vals, err := redisop.LPopCount(ctx, keyqueue, 3)
 		if err != nil {
 			if err == redis.Nil {
 				log.Debug("startReadQueue redisop.LPop", "keyqueue", keyqueue, "err", err)
@@ -77,14 +73,26 @@ func startReadQueue(ctx context.Context) {
 
 		for _, val := range vals {
 			arr := strings.Split(val, ":")
-			if len(arr) != 3 {
+			if len(arr) < 3 {
 				log.Error("startReadQueue strings.Split", "keyqueue", keyqueue, "val", val)
 				continue
 			}
 
-			seckillId := arr[0]
-			userId := arr[1]
+			seckillIdStr := arr[0]
+			userIdStr := arr[1]
 			secKillTimeStr := arr[2]
+
+			seckillId, err := strconv.ParseInt(seckillIdStr, 10, 64)
+			if err != nil {
+				log.Error("startReadQueue strconv.ParseInt", "seckillIdStr", seckillIdStr, "err", err)
+				continue
+			}
+
+			userId, err := strconv.ParseInt(userIdStr, 10, 64)
+			if err != nil {
+				log.Error("startReadQueue strconv.ParseInt", "userIdStr", userIdStr, "err", err)
+				continue
+			}
 
 			secKillTime, err := strconv.ParseInt(secKillTimeStr, 10, 64)
 			if err != nil {
@@ -175,93 +183,20 @@ func startReadQueue(ctx context.Context) {
 	}
 }
 
-func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTime int64) error {
+func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int64) error {
 	ctx, cancel := context.WithCancel(parentCtx)
 	defer cancel()
 
-	keyticket := fmt.Sprintf("seckill:ticket:%s:%s", seckillId, userId)
+	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
 	fieldStatus := "status"
+	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
-	wc := writeconcern.Majority()
-	txnOptions := options.Transaction().SetWriteConcern(wc)
-
-	// Starts a session on the client
-	session, err := mongodb.MongoClientInstance.Client.StartSession()
-	if err != nil {
-		log.Error("tryDoSeckill StartSession", "err", err)
-		return err
-	}
-	// Defers ending the session after the transaction is committed or ended
-	defer session.EndSession(ctx)
-
-	tresult, err := session.WithTransaction(ctx, func(ctx mongo.SessionContext) (interface{}, error) {
-		ID, err := primitive.ObjectIDFromHex(seckillId)
-		if err != nil {
-			return nil, err
-		}
-
-		collectionSeckill, err := mongodb.MongoClientInstance.GetCollection("seckill")
-		if err != nil {
-			log.Error("tryDoSeckill GetCollection", "collection", collectionSeckill.Name(), "err", err)
-			return nil, err
-		}
-
-		collectionSeckillResult, err := mongodb.MongoClientInstance.GetCollection("seckill_result")
-		if err != nil {
-			log.Error("tryDoSeckill GetCollection", "collection", collectionSeckillResult.Name(), "err", err)
-			return nil, err
-		}
-
-		// 减库存
-		filter1 := bson.D{{Key: "_id", Value: ID}, {Key: "finished", Value: 0}, {Key: "remaining", Value: bson.D{{Key: "$gt", Value: 0}}}}
-		update1 := bson.D{{Key: "$inc", Value: bson.D{{Key: "remaining", Value: -1}}}}
-		result1, err := collectionSeckill.UpdateOne(ctx, filter1, update1)
-		if err != nil {
-			log.Error("tryDoSeckill UpdateOne", "collection", collectionSeckill.Name(), "filter", filter1, "update", update1, "err", err)
-			return nil, err
-		}
-
-		log.Info("tryDoSeckill UpdateOne", "collection", collectionSeckill.Name(), "seckillId", seckillId, "result", result1)
-
-		if result1.ModifiedCount == 0 {
-			return pb.InquireSeckillStatus_IS_FAILED, errors.New("seckill is not found or finished or remaining is 0")
-		}
-
-		// 插入秒杀结果
-		// 下面注释的这个做法能否更合理？如果已经存在记录，是认为秒杀成功还是失败？所以还是直接插入，如果已经存在记录，会报错，不存在插入成功并返回秒杀成功
-		// filter2 := bson.D{{Key: "seckill_id", Value: seckillId}, {Key: "user_id", Value: userId}}
-		// update2 := bson.D{{Key: "$set", Value: bson.D{{Key: "updated_at", Value: time.Now()}}}}
-		// opts := options.Update().SetUpsert(true)
-
-		// result2, err := collectionSeckillResult.UpdateOne(ctx, filter2, update2, opts)
-		// if err != nil {
-		// 	log.Error("tryDoSeckill UpdateOne", "collection", collectionSeckillResult.Name(), "filter", filter2, "update", update2, "err", err)
-		// 	return nil, err
-		// }
-
-		now := time.Now()
-		doc := mongodb.EntitySecKillResult{
-			SeckillID:   seckillId,
-			UserID:      userId,
-			SecKillTime: &now,
-		}
-		doc.CreatedAt = now
-		result2, err := collectionSeckillResult.InsertOne(ctx, doc)
-		if err != nil {
-			log.Warn("tryDoSeckill InsertOne", "collection", collectionSeckillResult.Name(), "doc", doc, "err", err)
-			// 是否要区分是普通错误，还是由于唯一索引冲突导致的错误？
-			return pb.InquireSeckillStatus_IS_FAILED, err
-		}
-
-		log.Info("tryDoSeckill InsertOne", "collection", collectionSeckillResult.Name(), "seckillId", seckillId, "userId", userId, "result", result2)
-
-		return pb.InquireSeckillStatus_IS_SUCCESS, err
-	}, txnOptions)
+	status, lastInsertID, err := executeTransaction(ctx, seckillId, userId, secKillTime)
 
 	if err != nil {
-		log.Warn("tryDoSeckill WithTransaction", "err", err)
-		if tresult != nil {
-			status := tresult.(pb.InquireSeckillStatus)
+		log.Warn("tryDoSeckill Transaction", "err", err)
+		if status != pb.InquireSeckillStatus_IS_UNKNOWN {
+			// 更新redis上的状态
 			innererr := redisop.HSet(ctx, keyticket, fieldStatus, status.String())
 			if innererr != nil {
 				log.Error("tryDoSeckill WithTransaction redisop.HSet", "err", innererr)
@@ -269,26 +204,108 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId string, secKillTi
 		}
 		return err
 	}
-	log.Info("tryDoSeckill WithTransaction", "result", tresult)
 
-	if tresult == nil {
-		tresult = pb.InquireSeckillStatus_IS_FAILED
+	log.Info("tryDoSeckill Transaction", "status", status, "lastInsertID", lastInsertID)
+
+	if status != pb.InquireSeckillStatus_IS_SUCCESS {
+		log.Warn("tryDoSeckill Transaction", "status", status, "seckillId", seckillId, "userId", userId)
+		// 更新redis上的状态
+		err = redisop.HSet(ctx, keyticket, fieldStatus, status.String())
+		if err != nil {
+			log.Error("tryDoSeckill redisop.HSet", "err", err)
+		}
+		return nil
 	}
 
-	// 更新redis上的状态
-	// 这里更新失败，用户得不到真正的秒杀结果
-	err = redisop.HSet(ctx, keyticket, fieldStatus, tresult.(pb.InquireSeckillStatus).String())
-	if err != nil {
-		log.Error("tryDoSeckill redisop.HSet", "err", err)
-		return err
-	}
+	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		// 更新缓存里面秒杀活动的库存，这里不要求强一致性，只是用来判断大概的库存情况
+		cmd := pipe.HIncrBy(ctx, fmt.Sprintf("seckill:info:%d", seckillId), "Remaining", -1)
+		if cmd.Err() != nil {
+			log.Error("tryDoSeckill redisop.HIncrBy", "err", err)
+		}
 
-	// 更新缓存里面秒杀活动的库存，这里不要求强一致性，只是用来判断大概的库存情况
-	_, err = redisop.HIncrBy(ctx, fmt.Sprintf("seckill:%s", seckillId), "Remaining", -1)
+		// 把用户加入到已秒杀用户列表
+		err = redisop.SAdd(ctx, keyusers, userId)
+		if err != nil {
+			log.Error("tryDoSeckill redisop.SAdd", "err", err)
+		}
+
+		// 更新redis上用户排队的状态
+		err = redisop.HSet(ctx, keyticket, fieldStatus, status.String())
+		if err != nil {
+			log.Error("tryDoSeckill redisop.HSet", "err", err)
+		}
+		return nil
+	})
+
 	if err != nil {
-		log.Error("tryDoSeckill redisop.HIncrBy", "err", err)
+		log.Error("JoinSeckill redisclient.Rdb.TxPipelined", "err", err)
 		return err
 	}
 
 	return nil
+}
+
+func executeTransaction(ctx context.Context, seckillId, userId, secKillTime int64) (pb.InquireSeckillStatus, int64, error) {
+	tx, err := mysqldb.DB.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		log.Error("tryDoSeckill BeginTx", "err", err)
+		return pb.InquireSeckillStatus_IS_UNKNOWN, 0, err
+	}
+
+	// 减库存，库存数量大于0时减1
+	sqlRet, err := tx.ExecContext(ctx, "UPDATE seckill SET remaining = remaining - 1 WHERE id = ? AND finished = 0 AND remaining > 0", seckillId)
+	if err != nil {
+		log.Error("tryDoSeckill UpdateOne", "err", err)
+		e := tx.Rollback()
+		if e != nil {
+			log.Error("tryDoSeckill Rollback", "err", e)
+		}
+		return pb.InquireSeckillStatus_IS_UNKNOWN, 0, err
+	}
+
+	affected, err := sqlRet.RowsAffected()
+	if err != nil {
+		log.Error("tryDoSeckill RowsAffected", "err", err)
+		e := tx.Rollback()
+		if e != nil {
+			log.Error("tryDoSeckill Rollback", "err", e)
+		}
+		return pb.InquireSeckillStatus_IS_UNKNOWN, 0, err
+	}
+
+	log.Info("tryDoSeckill RowsAffected", "affected", affected)
+	if affected == 0 {
+		e := tx.Rollback()
+		if e != nil {
+			log.Error("tryDoSeckill Rollback", "err", e)
+		}
+		return pb.InquireSeckillStatus_IS_FAILED, 0, nil
+	}
+
+	// 插入秒杀结果
+	now := time.Now()
+	insertRet, err := tx.ExecContext(ctx, "INSERT INTO seckill_order (seckill_id, user_id, created_at) VALUES (?, ?, ?)", seckillId, userId, now)
+	if err != nil {
+		log.Error("tryDoSeckill InsertOne", "err", err)
+		// TODO: 区分是普通错误，还是由于唯一索引冲突导致的错误？
+		e := tx.Rollback()
+		if e != nil {
+			log.Error("tryDoSeckill Rollback", "err", e)
+		}
+		return pb.InquireSeckillStatus_IS_FAILED, 0, err
+	}
+
+	if e := tx.Commit(); e != nil {
+		log.Error("tryDoSeckill Commit", "err", e)
+		return pb.InquireSeckillStatus_IS_UNKNOWN, 0, e
+	}
+
+	lastInsertID, err := insertRet.LastInsertId()
+	if err != nil {
+		log.Error("tryDoSeckill LastInsertId", "err", err)
+		return pb.InquireSeckillStatus_IS_UNKNOWN, 0, err
+	}
+
+	return pb.InquireSeckillStatus_IS_SUCCESS, lastInsertID, nil
 }
