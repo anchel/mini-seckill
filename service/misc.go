@@ -154,21 +154,21 @@ func checkCanJoinSeckill(ctx context.Context, seckillID int64, userID int64) (pb
 	}
 
 	// 判断是否已加入过
-	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillID, userID)
+	// keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillID, userID)
 
-	status, err := redisop.Get(ctx, keyticket, false)
-	if err != nil {
-		log.Error("checkCanJoinSeckill redisop.Get", "err", err)
-	} else {
-		log.Info("checkCanJoinSeckill redisop.Get", "status", status)
-		// 如果是“排队中”，则返回加入成功，让前端继续轮询
-		// 此时不一定是真正在排队中，可能是数据库还为更新redis，不过此时继续轮询也没问题
-		if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
-			return pb.JoinSeckillStatus_JOIN_SUCCESS, nil
-		} else if status != "" {
-			return pb.JoinSeckillStatus_JOIN_FAILED, nil // 要么是秒杀成功或秒杀失败了，或者是其他状态
-		}
-	}
+	// status, err := redisop.Get(ctx, keyticket, false)
+	// if err != nil {
+	// 	log.Error("checkCanJoinSeckill redisop.Get", "err", err)
+	// } else {
+	// 	log.Info("checkCanJoinSeckill redisop.Get", "status", status)
+	// 	// 如果是“排队中”，则返回加入成功，让前端继续轮询
+	// 	// 此时不一定是真正在排队中，可能是数据库还为更新redis，不过此时继续轮询也没问题
+	// 	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
+	// 		return pb.JoinSeckillStatus_JOIN_SUCCESS, nil
+	// 	} else if status != "" {
+	// 		return pb.JoinSeckillStatus_JOIN_FAILED, nil // 要么是秒杀成功或秒杀失败了，或者是其他状态
+	// 	}
+	// }
 
 	return pb.JoinSeckillStatus_JOIN_UNKNOWN, nil
 }

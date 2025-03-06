@@ -22,7 +22,7 @@ var MaxQueueSize = 10
 var LocalQueueSize = 50
 var RedisBatchSize = 5
 
-func InitLogicReadQueue(ctx context.Context, wgExit *sync.WaitGroup) {
+func InitReadJoinQueue(ctx context.Context, wgExit *sync.WaitGroup) {
 	defer wgExit.Done()
 
 	wg := sync.WaitGroup{}
@@ -203,22 +203,15 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 
 		if lcsk.Remaining <= 0 {
 			log.Info("tryDoSeckill localcache Remaining <= 0", "SeckillID", seckillId)
-			err := redisop.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_FAILED.String(), time.Duration(rand.Intn(30)+80)*time.Second)
+			err := updateTicketStatus(ctx, keyticket, pb.InquireSeckillStatus_IS_FAILED)
 			if err != nil {
-				log.Error("tryDoSeckill redisop.HSet", "err", err)
+				log.Error("tryDoSeckill updateTicketStatus", "err", err)
 			}
 			return nil
 		}
 	} else {
 		log.Debug("tryDoSeckill seckill not found in localcache", "SeckillID", seckillId)
 	}
-
-	// TODO: just for test, remember to remove
-	// err := redisop.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_FAILED.String(), time.Duration(rand.Intn(30)+80)*time.Second)
-	// if err != nil {
-	// 	log.Error("tryDoSeckill redisop.HSet", "err", err)
-	// }
-	// return nil
 
 	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
@@ -227,10 +220,9 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 	if err != nil {
 		log.Warn("tryDoSeckill Transaction", "err", err)
 		if status != pb.InquireSeckillStatus_IS_UNKNOWN {
-			// 更新redis上的状态
-			innererr := redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second)
-			if innererr != nil {
-				log.Error("tryDoSeckill WithTransaction redisop.HSet", "err", innererr)
+			err := updateTicketStatus(ctx, keyticket, status)
+			if err != nil {
+				log.Error("tryDoSeckill updateTicketStatus", "err", err)
 			}
 		}
 		return err
@@ -241,9 +233,9 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 	if status != pb.InquireSeckillStatus_IS_SUCCESS {
 		log.Warn("tryDoSeckill Transaction", "status", status, "seckillId", seckillId, "userId", userId)
 		// 更新redis上的状态
-		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second)
+		err := updateTicketStatus(ctx, keyticket, status)
 		if err != nil {
-			log.Error("tryDoSeckill redisop.HSet", "err", err)
+			log.Error("tryDoSeckill updateTicketStatus", "err", err)
 		}
 		return nil
 	}
@@ -265,29 +257,51 @@ func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int6
 		// 更新缓存里面秒杀活动的库存，这里不要求强一致性，只是用来判断大概的库存情况
 		cmd := pipe.HIncrBy(ctx, fmt.Sprintf("seckill:info:%d", seckillId), "Remaining", -1)
 		if cmd.Err() != nil {
-			log.Error("tryDoSeckill redisop.HIncrBy", "err", err)
+			log.Error("tryDoSeckill pipe.HIncrBy", "err", cmd.Err())
 		}
 
 		// 把用户加入到已秒杀用户列表
-		err = redisop.SAdd(ctx, keyusers, userId)
+		err = pipe.SAdd(ctx, keyusers, userId).Err()
 		if err != nil {
-			log.Error("tryDoSeckill redisop.SAdd", "err", err)
-		}
-
-		// 更新redis上用户排队的状态
-		err = redisop.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second)
-		if err != nil {
-			log.Error("tryDoSeckill redisop.HSet", "err", err)
+			log.Error("tryDoSeckill pipe.SAdd", "err", err)
 		}
 		return nil
 	})
-
 	if err != nil {
-		log.Error("JoinSeckill redisclient.Rdb.TxPipelined", "err", err)
+		log.Error("tryDoSeckill redisclient.Rdb.TxPipelined", "err", err)
+		return err
+	}
+
+	err = updateTicketStatus(ctx, keyticket, status)
+	if err != nil {
+		log.Error("tryDoSeckill updateTicketStatus", "err", err)
 		return err
 	}
 
 	return nil
+}
+
+func updateTicketStatus(ctx context.Context, keyticket string, status pb.InquireSeckillStatus) error {
+	keyticketsub := fmt.Sprintf("%s:channel", keyticket)
+	_, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		// 更新redis上用户排队的状态
+		err := pipe.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second).Err()
+		if err != nil {
+			log.Error("updateTicketStatus pipe.Set", "err", err)
+		}
+
+		// 通知订阅者
+		n, e := pipe.Publish(ctx, keyticketsub, status.String()).Result()
+		if e != nil {
+			log.Error("updateTicketStatus pipe.Publish", "err", e)
+		} else {
+			if n == 0 {
+				log.Warn("updateTicketStatus pipe.Publish", "keyticketsub", keyticketsub, "n", n)
+			}
+		}
+		return nil
+	})
+	return err
 }
 
 func executeTransaction(ctx context.Context, seckillId, userId, secKillTime int64) (pb.InquireSeckillStatus, int64, error) {

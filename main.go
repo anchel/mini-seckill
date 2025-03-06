@@ -88,7 +88,7 @@ func main() {
 	}
 
 	wgExit.Add(1)
-	go service.InitLogicReadQueue(rootCtx, &wgExit)
+	go service.InitReadJoinQueue(rootCtx, &wgExit)
 
 	// init grpc server
 	wgExit.Add(1)

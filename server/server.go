@@ -123,7 +123,7 @@ func (s *SeckillServer) InquireSeckill(ctx context.Context, in *pb.InquireSeckil
 	}
 	rsp, err := service.InquireSeckill(ctx, req)
 	if err != nil {
-		log.Error("service.InquireSeckill", "err", err)
+		// log.Error("service.InquireSeckill", "err", err)
 		return nil, err
 	}
 	return &pb.InquireSeckillResponse{

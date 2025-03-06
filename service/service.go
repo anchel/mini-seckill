@@ -133,15 +133,15 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	val := fmt.Sprintf("%d:%d:%d", req.SeckillID, req.UserID, nowmill)
 
 	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
-		ret := pipe.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_QUEUEING.String(), time.Duration(rand.Intn(30)+80)*time.Second)
-		if ret.Err() != nil {
-			log.Error("JoinSeckill pipe.Set", "err", ret.Err())
-			return ret.Err()
+		_, err := pipe.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_QUEUEING.String(), time.Duration(rand.Intn(30)+80)*time.Second).Result()
+		if err != nil {
+			log.Error("JoinSeckill pipe.Set", "err", err)
+			return err
 		}
-		ret2 := pipe.RPush(ctx, keyqueue, val)
-		if ret2.Err() != nil {
-			log.Error("JoinSeckill pipe.RPush", "err", ret2.Err())
-			return ret2.Err()
+		_, err = pipe.RPush(ctx, keyqueue, val).Result()
+		if err != nil {
+			log.Error("JoinSeckill pipe.RPush", "err", err)
+			return err
 		}
 		return nil
 	})
@@ -174,7 +174,7 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 			// 如果用户不再次加入队列，如何获取真实状态？
 			return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil
 		}
-		log.Error("InquireSeckill redisop.Get", "err", err)
+		log.Error("InquireSeckill redisop.Get 11111", "err", err)
 		return nil, err
 	}
 
@@ -204,28 +204,85 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 
 	// 缓存状态是排队中
 	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
-		maxPollCount := 120
-		for range maxPollCount {
-			d := time.Duration(rand.Intn(2000)+8000) * time.Millisecond
-			time.Sleep(d) // sleep
+		subCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		defer cancel()
 
-			status, err := redisop.Get(ctx, keyticket, false)
-			if err != nil {
-				if err == redis.Nil {
-					return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_NOT_PARTICIPATING}, nil
+		errorChan := make(chan error, 1)
+		statusChan := make(chan string, 1)
+
+		sendError := func(err error) {
+			select {
+			case errorChan <- err:
+			default:
+			}
+		}
+
+		sendStatus := func(status string) {
+			select {
+			case statusChan <- status:
+			default:
+			}
+		}
+
+		// go func() {
+		// keyticketsub := fmt.Sprintf("%s:channel", keyticket)
+		// 	redisClient := redisclient.GetPubSubClient(ctx, os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"))
+		// 	defer redisClient.Close()
+
+		// 	pubsub := redisClient.Subscribe(subCtx, keyticketsub)
+		// 	defer pubsub.Close()
+
+		// 	ch := pubsub.Channel()
+
+		// 	select {
+		// 	case <-subCtx.Done():
+		// 		return
+		// 	case msg := <-ch:
+		// 		log.Info("InquireSeckill subscribe", "msg", msg.Payload)
+		// 		sendStatus(msg.Payload)
+		// 	}
+		// }()
+
+		go func() {
+			for {
+				delay := time.Duration(rand.Intn(2000)+2000) * time.Millisecond
+
+				select {
+				case <-subCtx.Done():
+					return
+				case <-time.After(delay):
+					status, err := redisop.Get(subCtx, keyticket, true)
+					if err != nil {
+						if err == redis.Nil {
+							status = pb.InquireSeckillStatus_IS_NOT_PARTICIPATING.String()
+							sendStatus(status)
+							return
+						} else {
+							sendError(err)
+							return
+						}
+					}
+					if status != pb.InquireSeckillStatus_IS_QUEUEING.String() {
+						sendStatus(status)
+						return
+					}
+
+					log.Info("InquireSeckill loop", "seckillID", req.SeckillID, "userID", req.UserID, "status", status)
 				}
-				log.Error("InquireSeckill redisop.Get", "err", err)
-				return nil, err
 			}
-			log.Info("InquireSeckill loop", "status", status)
-			if status != pb.InquireSeckillStatus_IS_QUEUEING.String() {
-				return &InquireSeckillResponse{Status: pb.InquireSeckillStatus(pb.InquireSeckillStatus_value[status])}, nil
-			}
+		}()
 
+		select {
+		case <-subCtx.Done():
+			return nil, errors.New("InquireSeckill timeout")
+		case err := <-errorChan:
+			return nil, err
+		case status := <-statusChan:
+			return &InquireSeckillResponse{Status: pb.InquireSeckillStatus(pb.InquireSeckillStatus_value[status])}, nil
 		}
 	}
 
-	return nil, errors.New("InquireSeckill timeout")
+	return nil, errors.New("InquireSeckill unknown status")
 }
 
 type CheckSeckillResultRequest struct {

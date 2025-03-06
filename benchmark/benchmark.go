@@ -29,15 +29,17 @@ func main() {
 	var countOther int64
 
 	var countISError int64
+	var countISQueue int64
 	var countISSuccess int64
 	var countISFailed int64
+	var countISOther int64
 
 	delayArr := []int{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}
 	delayLen := len(delayArr)
 	delayMutex := sync.Mutex{}
 
-	maxC := 10001
-	seckillId := int64(83)
+	maxC := 200001
+	seckillId := int64(105)
 
 	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -87,12 +89,15 @@ func main() {
 					if err != nil {
 						atomic.AddInt64(&countISError, 1)
 					} else {
-						if isret.Status == pb.InquireSeckillStatus_IS_SUCCESS {
+						if isret.Status == pb.InquireSeckillStatus_IS_QUEUEING {
+							atomic.AddInt64(&countISQueue, 1)
+						} else if isret.Status == pb.InquireSeckillStatus_IS_SUCCESS {
 							atomic.AddInt64(&countISSuccess, 1)
 						} else if isret.Status == pb.InquireSeckillStatus_IS_FAILED {
 							atomic.AddInt64(&countISFailed, 1)
 						} else {
 							// fmt.Println("isret.Status:", isret.Status)
+							atomic.AddInt64(&countISOther, 1)
 						}
 					}
 
@@ -125,6 +130,8 @@ func main() {
 	}
 	wg.Wait()
 
+	fmt.Println("seckillId", seckillId)
+	fmt.Println("--------------------------------------")
 	fmt.Println("time used:", time.Since(now).Seconds())
 
 	fmt.Printf("countError: %d\n", countError)
@@ -140,7 +147,9 @@ func main() {
 	fmt.Println("time used:", time.Since(now).Seconds())
 
 	fmt.Printf("countISError: %d\n", countISError)
+	fmt.Printf("countISQueue: %d\n", countISQueue)
 	fmt.Printf("countISSuccess: %d\n", countISSuccess)
 	fmt.Printf("countISFailed: %d\n", countISFailed)
+	fmt.Printf("countISOther: %d\n", countISOther)
 	fmt.Println("delayArr:", delayArr)
 }
