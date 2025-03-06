@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"sync"
+	"syscall"
 
 	"github.com/anchel/mini-seckill/lib/utils"
 	"github.com/anchel/mini-seckill/mysqldb"
@@ -20,19 +22,12 @@ import (
 
 func main() {
 
-	log.SetLevel(log.ErrorLevel)
+	// log.SetLevel(log.ErrorLevel)
 
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	wgExit := sync.WaitGroup{}
-
-	exe, err := os.Executable()
-	if err != nil {
-		log.Error("os.Executable error", "message", err)
-		return
-	}
-	log.Info("executable", "path", exe)
+	wgRoot := sync.WaitGroup{}
 
 	// check .env file
 	if utils.CheckEnvFile() {
@@ -46,33 +41,17 @@ func main() {
 	}
 
 	// init redis
-	err = redisclient.InitRedis(rootCtx, os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"), 0)
+	err := redisclient.InitRedis(os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"), 0)
 	if err != nil {
 		log.Error("init redis error", err)
 		return
 	}
-
-	// // init mongodb
-	// mongoClient, err := mongodb.InitMongoDB()
-	// if err != nil {
-	// 	log.Error("Error mongodb.InitMongoDB", "err", err)
-	// 	return
-	// }
-	// defer mongoClient.Disconnect(context.Background())
-
-	// // 定期检查mongo数据库健康状态
-	// go func() {
-	// 	for {
-	// 		time.Sleep(60 * time.Second)
-	// 		if !mongoClient.HealthCheck(rootCtx) {
-	// 			log.Warn("Trying to reconnect to MongoDB...")
-	// 			if err := mongoClient.Reconnect(rootCtx); err != nil {
-	// 				log.Error("Failed to reconnect to MongoDB", err.Error())
-	// 				exit()
-	// 			}
-	// 		}
-	// 	}
-	// }()
+	wgRoot.Add(1)
+	go func() {
+		defer wgRoot.Done()
+		<-rootCtx.Done()
+		redisclient.Close()
+	}()
 
 	// init mysql
 	err = mysqldb.InitDB()
@@ -80,34 +59,55 @@ func main() {
 		log.Error("service.InitDB error", "message", err)
 		return
 	}
+	wgRoot.Add(1)
+	go func() {
+		defer wgRoot.Done()
+		<-rootCtx.Done()
+		mysqldb.CloseDB()
+	}()
 
-	err = service.InitLogicLocalCache(rootCtx)
+	err = service.InitLocalCacheLogic()
 	if err != nil {
 		log.Error("service.InitLogic error", "message", err)
 		return
 	}
 
-	wgExit.Add(1)
-	go service.InitReadJoinQueue(rootCtx, &wgExit)
-
-	// init grpc server
-	wgExit.Add(1)
+	wgRoot.Add(1)
 	go func() {
-		defer wgExit.Done()
-
-		port := os.Getenv("GRPC_PORT")
-		lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
-		if err != nil {
-			log.Errorf("failed to listen: %v", err)
-			return
-		}
-		s := grpc.NewServer()
-		pb.RegisterSeckillServiceServer(s, &server.SeckillServer{})
-		log.Infof("server listening at %v", lis.Addr())
-		if err := s.Serve(lis); err != nil {
-			log.Errorf("failed to serve: %v", err)
-		}
+		defer wgRoot.Done()
+		service.InitReadJoinQueue(rootCtx)
 	}()
 
-	wgExit.Wait()
+	port := os.Getenv("GRPC_PORT")
+	lis, err := net.Listen("tcp", fmt.Sprintf(":%s", port))
+	if err != nil {
+		log.Errorf("failed to listen: %v", err)
+		return
+	}
+	s := grpc.NewServer()
+	pb.RegisterSeckillServiceServer(s, &server.SeckillServer{})
+
+	// init grpc server
+	wgRoot.Add(1)
+	go func() {
+		defer wgRoot.Done()
+		<-rootCtx.Done()
+		s.GracefulStop()
+	}()
+
+	go func() {
+		signalChan := make(chan os.Signal, 1)
+		signal.Notify(signalChan, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+		<-signalChan
+		cancel()
+	}()
+
+	log.Infof("server listening at %v", lis.Addr())
+	if err := s.Serve(lis); err != nil {
+		log.Errorf("failed to serve: %v", err)
+	}
+
+	wgRoot.Wait()
+
+	log.Info("server exit")
 }

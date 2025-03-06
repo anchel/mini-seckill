@@ -9,7 +9,7 @@ import (
 
 var Rdb *redis.Client
 
-func InitRedis(ctx context.Context, addr, pwd string, db int) error {
+func InitRedis(addr, pwd string, db int) error {
 	client := redis.NewClient(&redis.Options{
 		Addr:        addr,
 		Password:    pwd,
@@ -17,7 +17,7 @@ func InitRedis(ctx context.Context, addr, pwd string, db int) error {
 		ReadTimeout: time.Duration(8) * time.Second,
 	})
 
-	if err := client.Ping(ctx).Err(); err != nil {
+	if err := client.Ping(context.Background()).Err(); err != nil {
 		return err
 	}
 
@@ -32,4 +32,8 @@ func GetPubSubClient(ctx context.Context, addr, pwd string) *redis.Client {
 		Password: pwd,
 	})
 	return client
+}
+
+func Close() {
+	Rdb.Close()
 }

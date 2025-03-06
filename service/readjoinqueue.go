@@ -22,16 +22,14 @@ var MaxQueueSize = 10
 var LocalQueueSize = 50
 var RedisBatchSize = 5
 
-func InitReadJoinQueue(ctx context.Context, wgExit *sync.WaitGroup) {
-	defer wgExit.Done()
+func InitReadJoinQueue(ctx context.Context) {
+	wg := &sync.WaitGroup{}
 
-	wg := sync.WaitGroup{}
 	for range MaxQueueSize {
 		wg.Add(1)
-		go func(w *sync.WaitGroup) {
-			defer w.Done()
-			startReadQueue(ctx)
-		}(&wg)
+		go func() {
+			startReadQueue(ctx, wg)
+		}()
 	}
 
 	wg.Wait()
@@ -52,14 +50,16 @@ type TryDoSeckillResult struct {
 	err error
 }
 
-func startReadQueue(ctx context.Context) {
+func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	keyqueue := "seckill:queue"
 
 	localQueue := make(chan *LocalQueueSeckillJoin, LocalQueueSize)
 
 	readFromRedis := func() (bool, error) {
 		// 从redis读取数据
-		vals, err := redisop.LPopCount(ctx, keyqueue, RedisBatchSize, false)
+		vals, err := redisop.LPopCount(context.Background(), keyqueue, RedisBatchSize, false)
 		if err != nil {
 			if err == redis.Nil {
 				log.Error("startReadQueue redisop.LPop", "keyqueue", keyqueue, "err", err)
@@ -113,8 +113,6 @@ func startReadQueue(ctx context.Context) {
 			}
 
 			select {
-			case <-ctx.Done():
-				return false, nil
 			case localQueue <- lqs:
 				log.Debug("startReadQueue localQueue <-", "seckillId", seckillId, "userId", userId, "secKillTime", secKillTime)
 			}
@@ -123,6 +121,8 @@ func startReadQueue(ctx context.Context) {
 		return false, nil
 	}
 
+	var exit bool
+
 	go func() {
 		var delay bool
 		var done chan ReadResult
@@ -130,6 +130,9 @@ func startReadQueue(ctx context.Context) {
 		for {
 			var startRead <-chan time.Time
 			if done == nil {
+				if exit {
+					break
+				}
 				if delay {
 					startRead = time.After(1000 * time.Millisecond)
 				} else {
@@ -138,14 +141,12 @@ func startReadQueue(ctx context.Context) {
 			}
 
 			select {
-			case <-ctx.Done():
-				return
 			case <-startRead:
 				done = make(chan ReadResult, 1)
 				go func() {
 					d, err := readFromRedis()
 					if err != nil {
-						log.Error("startReadQueue readFromRedis", "err", err)
+						log.Warn("startReadQueue readFromRedis", "err", err)
 					}
 
 					if d {
@@ -154,6 +155,10 @@ func startReadQueue(ctx context.Context) {
 					done <- ReadResult{delay: d, err: err}
 				}()
 			case rr := <-done:
+				if exit {
+					close(localQueue) // 关闭channel，只能读不能写
+					return
+				}
 				done = nil
 				delay = rr.delay
 			}
@@ -163,20 +168,30 @@ func startReadQueue(ctx context.Context) {
 	var localQueueCond chan *LocalQueueSeckillJoin
 	var done chan any
 
+loop:
 	for {
+		var ctxChan <-chan struct{}
+		if !exit {
+			ctxChan = ctx.Done()
+		}
+
 		if done == nil {
 			localQueueCond = localQueue
 		}
 
 		select {
-		case <-ctx.Done():
-			return
-		case lqs := <-localQueueCond:
+		case <-ctxChan:
+			exit = true
+			continue loop
+		case lqs, ok := <-localQueueCond:
+			if !ok {
+				break loop
+			}
 			log.Info("startReadQueue <-localQueue", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime)
 			done = make(chan any, 1)
 			go func() {
 				// 业务逻辑
-				err := tryDoSeckill(ctx, lqs.SeckillID, lqs.UserID, lqs.SecKillTime)
+				err := tryDoSeckill(lqs.SeckillID, lqs.UserID, lqs.SecKillTime)
 				if err != nil {
 					log.Warn("startReadQueue business logic", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "err", err)
 				}
@@ -189,9 +204,8 @@ func startReadQueue(ctx context.Context) {
 	}
 }
 
-func tryDoSeckill(parentCtx context.Context, seckillId, userId, secKillTime int64) error {
-	ctx, cancel := context.WithCancel(parentCtx)
-	defer cancel()
+func tryDoSeckill(seckillId, userId, secKillTime int64) error {
+	ctx := context.Background()
 
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
 

@@ -1,7 +1,6 @@
 package service
 
 import (
-	"context"
 	"sync"
 )
 
@@ -11,8 +10,8 @@ func init() {
 	SeckillInfoLocalCacheMap = sync.Map{}
 }
 
-func InitLogicLocalCache(ctx context.Context) error {
-	// 每日凌晨3点清空
+func InitLocalCacheLogic() error {
+	// TODO: 每日凌晨3点清空
 
 	return nil
 }

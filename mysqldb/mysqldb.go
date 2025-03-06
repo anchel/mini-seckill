@@ -37,3 +37,7 @@ func InitDB() error {
 	DB = db
 	return nil
 }
+
+func CloseDB() {
+	DB.Close()
+}
