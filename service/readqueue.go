@@ -62,14 +62,17 @@ func startReadQueue(ctx context.Context) {
 		vals, err := redisop.LPopCount(ctx, keyqueue, RedisBatchSize, false)
 		if err != nil {
 			if err == redis.Nil {
-				log.Debug("startReadQueue redisop.LPop", "keyqueue", keyqueue, "err", err)
+				log.Error("startReadQueue redisop.LPop", "keyqueue", keyqueue, "err", err)
 				return true, nil
 			}
 			return true, err
 		}
 
 		if len(vals) == 0 {
+			// log.Error("startReadQueue redisop.LPop empty", "keyqueue", keyqueue, "vals.length", len(vals))
 			return true, nil
+		} else {
+			// log.Error("startReadQueue redisop.LPop no empty", "keyqueue", keyqueue, "vals.length", len(vals))
 		}
 
 		log.Info("startReadQueue redisop.LPop", "keyqueue", keyqueue, "vals.length", len(vals))
@@ -128,7 +131,7 @@ func startReadQueue(ctx context.Context) {
 			var startRead <-chan time.Time
 			if done == nil {
 				if delay {
-					startRead = time.After(500 * time.Millisecond)
+					startRead = time.After(1000 * time.Millisecond)
 				} else {
 					startRead = time.After(5 * time.Millisecond)
 				}

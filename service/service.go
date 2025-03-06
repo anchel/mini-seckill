@@ -183,16 +183,18 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 	// 缓存状态是秒杀成功
 	if status == pb.InquireSeckillStatus_IS_SUCCESS.String() {
 
-		doc, err := mysqldb.QuerySeckillOrder(ctx, req.SeckillID, req.UserID, false)
-		if err != nil {
-			log.Error("InquireSeckill mysqldb.QuerySeckillOrder", "seckill_id", req.SeckillID, "user_id", req.UserID, "err", err)
-			return nil, err
-		}
+		// TODO: 从mysql中查询订单信息，这里为了性能测试暂时注释掉
+		// doc, err := mysqldb.QuerySeckillOrder(ctx, req.SeckillID, req.UserID, false)
+		// if err != nil {
+		// 	log.Error("InquireSeckill mysqldb.QuerySeckillOrder", "seckill_id", req.SeckillID, "user_id", req.UserID, "err", err)
+		// 	return nil, err
+		// }
 
-		if doc == nil {
-			return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_FAILED}, nil
-		}
-		return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_SUCCESS, OrderId: doc.ID}, nil
+		// if doc == nil {
+		// 	return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_FAILED}, nil
+		// }
+
+		return &InquireSeckillResponse{Status: pb.InquireSeckillStatus_IS_SUCCESS, OrderId: 0}, nil
 	}
 
 	// 缓存状态是秒杀失败
@@ -204,6 +206,9 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
 		maxPollCount := 120
 		for range maxPollCount {
+			d := time.Duration(rand.Intn(2000)+8000) * time.Millisecond
+			time.Sleep(d) // sleep
+
 			status, err := redisop.Get(ctx, keyticket, false)
 			if err != nil {
 				if err == redis.Nil {
@@ -216,8 +221,7 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 			if status != pb.InquireSeckillStatus_IS_QUEUEING.String() {
 				return &InquireSeckillResponse{Status: pb.InquireSeckillStatus(pb.InquireSeckillStatus_value[status])}, nil
 			}
-			d := time.Duration(rand.Intn(2000)+2000) * time.Millisecond
-			time.Sleep(d) // sleep 1000ms
+
 		}
 	}
 

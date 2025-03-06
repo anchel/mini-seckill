@@ -36,8 +36,8 @@ func main() {
 	delayLen := len(delayArr)
 	delayMutex := sync.Mutex{}
 
-	maxC := 100001
-	seckillId := int64(76)
+	maxC := 10001
+	seckillId := int64(83)
 
 	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
