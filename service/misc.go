@@ -72,6 +72,9 @@ func checkCanJoinSeckill(ctx context.Context, seckillID int64, userID int64) (pb
 		if checkSeckillNotStart(lcsk.StartTime) {
 			return pb.JoinSeckillStatus_JOIN_NOT_START, nil
 		}
+		if checkSeckillNoRemaining(lcsk.Remaining) {
+			return pb.JoinSeckillStatus_JOIN_NO_REMAINING, nil
+		}
 	}
 
 	// 从redis来判断秒杀活动的状态
