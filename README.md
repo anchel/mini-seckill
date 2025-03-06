@@ -6,6 +6,8 @@
 
 ## CreateSeckill
 
+> 创建秒杀，返回秒杀 id
+
 ### 入参
 
 ```
@@ -27,6 +29,8 @@ message CreateSeckillResponse {
 ```
 
 ## JoinSeckill
+
+> 加入秒杀
 
 ### 入参
 
@@ -55,6 +59,8 @@ message JoinSeckillResponse {
 ```
 
 ## InquireSeckill
+
+> 查询秒杀状态，内部会阻塞，直到最终结果
 
 ### 入参
 
