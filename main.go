@@ -22,7 +22,7 @@ import (
 
 func main() {
 
-	// log.SetLevel(log.ErrorLevel)
+	log.SetLevel(log.ErrorLevel)
 
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -65,12 +65,6 @@ func main() {
 		<-rootCtx.Done()
 		mysqldb.CloseDB()
 	}()
-
-	err = service.InitLocalCacheLogic()
-	if err != nil {
-		log.Error("service.InitLogic error", "message", err)
-		return
-	}
 
 	wgRoot.Add(1)
 	go func() {

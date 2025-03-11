@@ -61,22 +61,6 @@ func checkSeckillNoRemaining(Remaining int64) bool {
 
 func checkCanJoinSeckill(ctx context.Context, seckillID int64, userID int64) (pb.JoinSeckillStatus, error) {
 
-	ldata, ok := SeckillInfoLocalCacheMap.Load(seckillID)
-	if ok {
-		log.Info("checkCanJoinSeckill seckill found in localcache", "SeckillID", seckillID)
-		lcsk := ldata.(*LocalCacheSeckill)
-
-		if checkSeckillEnd(lcsk.Finished, lcsk.EndTime) {
-			return pb.JoinSeckillStatus_JOIN_FINISHED, nil
-		}
-		if checkSeckillNotStart(lcsk.StartTime) {
-			return pb.JoinSeckillStatus_JOIN_NOT_START, nil
-		}
-		if checkSeckillNoRemaining(lcsk.Remaining) {
-			return pb.JoinSeckillStatus_JOIN_NO_REMAINING, nil
-		}
-	}
-
 	// 从redis来判断秒杀活动的状态
 	fields := []string{"StartTime", "EndTime", "Remaining", "Finished"}
 	key := fmt.Sprintf("seckill:info:%d", seckillID)

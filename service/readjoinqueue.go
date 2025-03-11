@@ -208,25 +208,6 @@ func tryDoSeckill(seckillId, userId, secKillTime int64) error {
 	ctx := context.Background()
 
 	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
-
-	// 从本地缓存来判断秒杀活动的状态
-	ldata, ok := SeckillInfoLocalCacheMap.Load(seckillId)
-	if ok {
-		log.Info("tryDoSeckill seckill found in localcache", "SeckillID", seckillId)
-		lcsk := ldata.(*LocalCacheSeckill)
-
-		if lcsk.Remaining <= 0 {
-			log.Info("tryDoSeckill localcache Remaining <= 0", "SeckillID", seckillId)
-			err := updateTicketStatus(ctx, keyticket, pb.InquireSeckillStatus_IS_FAILED)
-			if err != nil {
-				log.Error("tryDoSeckill updateTicketStatus", "err", err)
-			}
-			return nil
-		}
-	} else {
-		log.Debug("tryDoSeckill seckill not found in localcache", "SeckillID", seckillId)
-	}
-
 	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
 	status, lastInsertID, err := executeTransaction(ctx, seckillId, userId, secKillTime)
@@ -253,19 +234,6 @@ func tryDoSeckill(seckillId, userId, secKillTime int64) error {
 		}
 		return nil
 	}
-
-	// 更新本地缓存，加快性能
-	doc, err := mysqldb.QuerySeckillByID(ctx, seckillId, true)
-	if err != nil {
-		log.Error("tryDoSeckill mysqldb.QuerySeckillByID", "err", err)
-		return err
-	}
-	SeckillInfoLocalCacheMap.Store(seckillId, &LocalCacheSeckill{
-		StartTime: doc.StartTime.UnixMilli(),
-		EndTime:   doc.EndTime.UnixMilli(),
-		Remaining: doc.Remaining,
-		Finished:  doc.Finished,
-	})
 
 	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		// 更新缓存里面秒杀活动的库存，这里不要求强一致性，只是用来判断大概的库存情况
