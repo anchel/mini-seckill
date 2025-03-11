@@ -102,6 +102,7 @@ func (s *SeckillServer) JoinSeckill(ctx context.Context, in *pb.JoinSeckillReque
 	}
 	return &pb.JoinSeckillResponse{
 		Status: rsp.Status,
+		Ticket: rsp.Ticket,
 	}, nil
 }
 
@@ -117,9 +118,15 @@ func (s *SeckillServer) InquireSeckill(ctx context.Context, in *pb.InquireSeckil
 		return nil, errors.New("UserId is empty")
 	}
 
+	if in.Ticket == "" {
+		log.Error("Ticket is empty")
+		return nil, errors.New("Ticket is empty")
+	}
+
 	req := &service.InquireSeckillRequest{
 		SeckillID: in.SeckillId,
 		UserID:    in.UserId,
+		Ticket:    in.Ticket,
 	}
 	rsp, err := service.InquireSeckill(ctx, req)
 	if err != nil {

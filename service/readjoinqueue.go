@@ -36,9 +36,10 @@ func InitReadJoinQueue(ctx context.Context) {
 }
 
 type LocalQueueSeckillJoin struct {
-	SeckillID   int64 `json:"seckill_id"`
-	UserID      int64 `json:"user_id"`
-	SecKillTime int64 `json:"seckill_time"`
+	SeckillID   int64  `json:"seckill_id"`
+	UserID      int64  `json:"user_id"`
+	SecKillTime int64  `json:"seckill_time"`
+	Ticket      string `json:"ticket"`
 }
 
 type ReadResult struct {
@@ -79,7 +80,7 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 
 		for _, val := range vals {
 			arr := strings.Split(val, ":")
-			if len(arr) < 3 {
+			if len(arr) < 4 {
 				log.Error("startReadQueue strings.Split", "keyqueue", keyqueue, "val", val)
 				continue
 			}
@@ -87,6 +88,7 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 			seckillIdStr := arr[0]
 			userIdStr := arr[1]
 			secKillTimeStr := arr[2]
+			ticket := arr[3]
 
 			seckillId, err := strconv.ParseInt(seckillIdStr, 10, 64)
 			if err != nil {
@@ -110,6 +112,7 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 				SeckillID:   seckillId,
 				UserID:      userId,
 				SecKillTime: secKillTime,
+				Ticket:      ticket,
 			}
 
 			select {
@@ -187,11 +190,11 @@ loop:
 			if !ok {
 				break loop
 			}
-			log.Info("startReadQueue <-localQueue", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime)
+			log.Info("startReadQueue <-localQueue", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "ticket", lqs.Ticket)
 			done = make(chan any, 1)
 			go func() {
 				// 业务逻辑
-				err := tryDoSeckill(lqs.SeckillID, lqs.UserID, lqs.SecKillTime)
+				err := tryDoSeckill(lqs.SeckillID, lqs.UserID, lqs.SecKillTime, lqs.Ticket)
 				if err != nil {
 					log.Warn("startReadQueue business logic", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "err", err)
 				}
@@ -204,10 +207,11 @@ loop:
 	}
 }
 
-func tryDoSeckill(seckillId, userId, secKillTime int64) error {
+func tryDoSeckill(seckillId, userId, secKillTime int64, ticket string) error {
 	ctx := context.Background()
 
-	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
+	// keyticket := fmt.Sprintf("seckill:ticket:%d:%d", seckillId, userId)
+	keyticket := ticket
 	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
 	status, lastInsertID, err := executeTransaction(ctx, seckillId, userId, secKillTime)
@@ -328,7 +332,7 @@ func executeTransaction(ctx context.Context, seckillId, userId, secKillTime int6
 	now := time.Now()
 	insertRet, err := tx.ExecContext(ctx, "INSERT INTO seckill_order (seckill_id, user_id, created_at) VALUES (?, ?, ?)", seckillId, userId, now)
 	if err != nil {
-		log.Error("tryDoSeckill InsertOne", "err", err)
+		log.Warn("tryDoSeckill InsertOne", "err", err)
 		// TODO: 区分是普通错误，还是由于唯一索引冲突导致的错误？
 		e := tx.Rollback()
 		if e != nil {

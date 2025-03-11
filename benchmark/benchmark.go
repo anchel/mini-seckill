@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"log"
 	"math"
+	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	pb "github.com/anchel/mini-seckill/proto"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
@@ -38,8 +40,8 @@ func main() {
 	delayLen := len(delayArr)
 	delayMutex := sync.Mutex{}
 
-	maxC := 100001
-	seckillId := int64(1)
+	maxC := 20001
+	seckillId := int64(6)
 
 	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -56,7 +58,8 @@ func main() {
 	for i := 0; i < maxC; i++ {
 		wg.Add(1)
 		go func(w *sync.WaitGroup, i int) {
-			userid := int64(i + 1)
+			// userid := int64(i + 1)
+			userid := rand.Int63n(1000000) + 1
 
 			rsp, err := c.JoinSeckill(context.Background(), &pb.JoinSeckillRequest{
 				SeckillId: seckillId,
@@ -85,6 +88,7 @@ func main() {
 					isret, err := c.InquireSeckill(context.Background(), &pb.InquireSeckillRequest{
 						SeckillId: seckillId,
 						UserId:    userid,
+						Ticket:    rsp.Ticket,
 					})
 					if err != nil {
 						atomic.AddInt64(&countISError, 1)

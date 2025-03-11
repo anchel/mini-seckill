@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
+	"os"
 	"sync"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/anchel/mini-seckill/mysqldb"
 	"github.com/anchel/mini-seckill/redisclient"
 	"github.com/charmbracelet/log"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 
 	pb "github.com/anchel/mini-seckill/proto"
@@ -108,6 +110,7 @@ type JoinSeckillRequest struct {
 
 type JoinSeckillResponse struct {
 	Status pb.JoinSeckillStatus
+	Ticket string
 }
 
 var localCache sync.Map
@@ -122,15 +125,17 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 	}
 
 	if status != pb.JoinSeckillStatus_JOIN_UNKNOWN {
-		return &JoinSeckillResponse{Status: status}, nil
+		return &JoinSeckillResponse{Status: status, Ticket: ""}, nil
 	}
 
 	// 加入队列
 	nowmill := time.Now().UnixMilli()
-	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
+	uuidStr := uuid.NewString()
+	// keyticket := fmt.Sprintf("seckill:ticket:%d:%d:%s", req.SeckillID, req.UserID, uuidStr)
+	keyticket := fmt.Sprintf("seckill-ticket-%s", uuidStr)
 
 	keyqueue := "seckill:queue"
-	val := fmt.Sprintf("%d:%d:%d", req.SeckillID, req.UserID, nowmill)
+	val := fmt.Sprintf("%d:%d:%d:%s", req.SeckillID, req.UserID, nowmill, keyticket)
 
 	_, err = redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		_, err := pipe.Set(ctx, keyticket, pb.InquireSeckillStatus_IS_QUEUEING.String(), time.Duration(rand.Intn(30)+80)*time.Second).Result()
@@ -150,12 +155,13 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 		return nil, err
 	}
 
-	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JOIN_SUCCESS}, nil
+	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JOIN_SUCCESS, Ticket: keyticket}, nil
 }
 
 type InquireSeckillRequest struct {
 	SeckillID int64
 	UserID    int64
+	Ticket    string
 }
 
 type InquireSeckillResponse struct {
@@ -165,7 +171,8 @@ type InquireSeckillResponse struct {
 
 // InquireSeckill 查询秒杀状态
 func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSeckillResponse, error) {
-	keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
+	// keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
+	keyticket := req.Ticket
 
 	status, err := redisop.Get(ctx, keyticket, true)
 	if err != nil {
@@ -224,28 +231,31 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 			}
 		}
 
-		// go func() {
-		// keyticketsub := fmt.Sprintf("%s:channel", keyticket)
-		// 	redisClient := redisclient.GetPubSubClient(ctx, os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"))
-		// 	defer redisClient.Close()
+		go func() {
+			keyticketsub := fmt.Sprintf("%s:channel", keyticket)
+			redisClient := redisclient.GetPubSubClient(ctx, os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"))
+			defer redisClient.Close()
 
-		// 	pubsub := redisClient.Subscribe(subCtx, keyticketsub)
-		// 	defer pubsub.Close()
+			pubsub := redisClient.Subscribe(subCtx, keyticketsub)
+			defer pubsub.Close()
 
-		// 	ch := pubsub.Channel()
+			ch := pubsub.Channel()
 
-		// 	select {
-		// 	case <-subCtx.Done():
-		// 		return
-		// 	case msg := <-ch:
-		// 		log.Info("InquireSeckill subscribe", "msg", msg.Payload)
-		// 		sendStatus(msg.Payload)
-		// 	}
-		// }()
+			select {
+			case <-subCtx.Done():
+				return
+			case msg := <-ch:
+				log.Info("InquireSeckill subscribe", "msg", msg.Payload)
+				// if msg.Payload == pb.InquireSeckillStatus_IS_SUCCESS.String() {
+				// 	log.Error("InquireSeckill subscribe", "UserID", req.UserID, "msg", msg.Payload)
+				// }
+				sendStatus(msg.Payload)
+			}
+		}()
 
 		go func() {
 			for {
-				delay := time.Duration(rand.Intn(2000)+2000) * time.Millisecond
+				delay := time.Duration(rand.Intn(2000)+6000) * time.Millisecond
 
 				select {
 				case <-subCtx.Done():

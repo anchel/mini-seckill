@@ -71,6 +71,7 @@ message JoinSeckillRequest {
 
 message JoinSeckillResponse {
     JoinSeckillStatus status = 1;
+    string ticket = 2;
 }
 
 enum InquireSeckillStatus {
@@ -84,6 +85,7 @@ enum InquireSeckillStatus {
 message InquireSeckillRequest {
     int64 seckill_id = 1;
     int64 user_id = 2;
+    string ticket = 3;
 }
 
 message InquireSeckillResponse {
