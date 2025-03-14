@@ -18,6 +18,7 @@ import (
 	"github.com/charmbracelet/log"
 	"github.com/joho/godotenv"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/reflection"
 )
 
 func main() {
@@ -80,6 +81,8 @@ func main() {
 	}
 	s := grpc.NewServer()
 	pb.RegisterSeckillServiceServer(s, &server.SeckillServer{})
+	// Register reflection service on gRPC server.
+	reflection.Register(s)
 
 	// init grpc server
 	wgRoot.Add(1)

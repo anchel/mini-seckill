@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/anchel/mini-seckill/lib/redisop"
@@ -124,7 +125,7 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 		return false, nil
 	}
 
-	var exit bool
+	var exit int32
 
 	go func() {
 		var delay bool
@@ -132,8 +133,9 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 
 		for {
 			var startRead <-chan time.Time
-			if done == nil {
-				if exit {
+			if done == nil { // 如果done不为nil，需要等它处理结束
+				if atomic.LoadInt32(&exit) != 0 { // 已结束
+					close(localQueue) // 关闭channel，只能读不能写
 					break
 				}
 				if delay {
@@ -158,10 +160,6 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 					done <- ReadResult{delay: d, err: err}
 				}()
 			case rr := <-done:
-				if exit {
-					close(localQueue) // 关闭channel，只能读不能写
-					return
-				}
 				done = nil
 				delay = rr.delay
 			}
@@ -174,9 +172,11 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 loop:
 	for {
 		var ctxChan <-chan struct{}
-		if !exit {
+		if atomic.LoadInt32(&exit) == 0 { // 未结束
 			ctxChan = ctx.Done()
 		}
+
+		// 如果是已结束，仍需要等待队列处理完毕才退出
 
 		if done == nil {
 			localQueueCond = localQueue
@@ -184,10 +184,10 @@ loop:
 
 		select {
 		case <-ctxChan:
-			exit = true
+			atomic.AddInt32(&exit, 1) // 设置退出标志
 			continue loop
 		case lqs, ok := <-localQueueCond:
-			if !ok {
+			if !ok { // 这一步很重要，说明队列处理完成，需要退出
 				break loop
 			}
 			log.Info("startReadQueue <-localQueue", "seckillId", lqs.SeckillID, "userId", lqs.UserID, "secKillTime", lqs.SecKillTime, "ticket", lqs.Ticket)
