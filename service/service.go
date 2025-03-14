@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"math/rand"
-	"os"
 	"sync"
 	"time"
 
@@ -155,6 +154,14 @@ func JoinSeckill(ctx context.Context, req *JoinSeckillRequest) (*JoinSeckillResp
 		return nil, err
 	}
 
+	// 提前load进去，避免后面沦陷的时候已经错过通知
+	notifyChan := make(chan string, 1)
+	notifyMap.LoadOrStore(keyticket, notifyChan)
+	go func() {
+		time.Sleep(20 * time.Second)
+		notifyMap.Delete(keyticket)
+	}()
+
 	return &JoinSeckillResponse{Status: pb.JoinSeckillStatus_JOIN_SUCCESS, Ticket: keyticket}, nil
 }
 
@@ -171,7 +178,6 @@ type InquireSeckillResponse struct {
 
 // InquireSeckill 查询秒杀状态
 func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSeckillResponse, error) {
-	// keyticket := fmt.Sprintf("seckill:ticket:%d:%d", req.SeckillID, req.UserID)
 	keyticket := req.Ticket
 
 	status, err := redisop.Get(ctx, keyticket, true)
@@ -211,7 +217,7 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 
 	// 缓存状态是排队中
 	if status == pb.InquireSeckillStatus_IS_QUEUEING.String() {
-		subCtx, cancel := context.WithTimeout(ctx, 120*time.Second)
+		subCtx, cancel := context.WithTimeout(ctx, 100*time.Second)
 		defer cancel()
 
 		errorChan := make(chan error, 1)
@@ -231,38 +237,54 @@ func InquireSeckill(ctx context.Context, req *InquireSeckillRequest) (*InquireSe
 			}
 		}
 
+		// go func() {
+		// 	keyticketsub := fmt.Sprintf("%s:channel", keyticket)
+		// 	redisClient := redisclient.GetPubSubClient(ctx, os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"))
+		// 	defer redisClient.Close()
+
+		// 	pubsub := redisClient.Subscribe(subCtx, keyticketsub)
+		// 	defer pubsub.Close()
+
+		// 	ch := pubsub.Channel()
+
+		// 	select {
+		// 	case <-subCtx.Done():
+		// 		return
+		// 	case msg := <-ch:
+		// 		log.Info("InquireSeckill subscribe", "msg", msg.Payload)
+		// 		// if msg.Payload == pb.InquireSeckillStatus_IS_SUCCESS.String() {
+		// 		// 	log.Error("InquireSeckill subscribe", "UserID", req.UserID, "msg", msg.Payload)
+		// 		// }
+		// 		sendStatus(msg.Payload)
+		// 	}
+		// }()
+
 		go func() {
-			keyticketsub := fmt.Sprintf("%s:channel", keyticket)
-			redisClient := redisclient.GetPubSubClient(ctx, os.Getenv("REDIS_ADDR"), os.Getenv("REDIS_PASSWORD"))
-			defer redisClient.Close()
-
-			pubsub := redisClient.Subscribe(subCtx, keyticketsub)
-			defer pubsub.Close()
-
-			ch := pubsub.Channel()
-
+			notifyChan := make(chan string, 1)
+			result, loaded := notifyMap.LoadOrStore(keyticket, notifyChan)
+			if loaded {
+				notifyChan = result.(chan string)
+			}
+			defer notifyMap.Delete(keyticket)
 			select {
 			case <-subCtx.Done():
-				return
-			case msg := <-ch:
-				log.Info("InquireSeckill subscribe", "msg", msg.Payload)
-				// if msg.Payload == pb.InquireSeckillStatus_IS_SUCCESS.String() {
-				// 	log.Error("InquireSeckill subscribe", "UserID", req.UserID, "msg", msg.Payload)
-				// }
-				sendStatus(msg.Payload)
+			case status := <-notifyChan:
+				log.Info("InquireSeckill notifyChan receive", "ticket", keyticket, "status", status)
+				sendStatus(status)
 			}
 		}()
 
 		go func() {
 			for {
-				delay := time.Duration(rand.Intn(2000)+6000) * time.Millisecond
+				delay := time.Duration(rand.Intn(2000)+12000) * time.Millisecond
 
 				select {
 				case <-subCtx.Done():
 					return
 				case <-time.After(delay):
-					status, err := redisop.Get(subCtx, keyticket, true)
+					status, err := redisop.Get(context.Background(), keyticket, true)
 					if err != nil {
+						// log.Error("InquireSeckill loop redisop.Get error")
 						if err == redis.Nil {
 							status = pb.InquireSeckillStatus_IS_NOT_PARTICIPATING.String()
 							sendStatus(status)

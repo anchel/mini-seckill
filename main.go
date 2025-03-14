@@ -23,7 +23,7 @@ import (
 
 func main() {
 
-	log.SetLevel(log.ErrorLevel)
+	log.SetLevel(log.WarnLevel)
 
 	rootCtx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -70,7 +70,13 @@ func main() {
 	wgRoot.Add(1)
 	go func() {
 		defer wgRoot.Done()
-		service.InitReadJoinQueue(rootCtx)
+		service.StartSubscribeNotify(rootCtx)
+	}()
+
+	wgRoot.Add(1)
+	go func() {
+		defer wgRoot.Done()
+		service.StartReadJoinQueue(rootCtx)
 	}()
 
 	port := os.Getenv("GRPC_PORT")

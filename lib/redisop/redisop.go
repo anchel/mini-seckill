@@ -13,6 +13,15 @@ import (
 var countTotal int64
 var countGet int64
 
+func init() {
+	go func() {
+		for {
+			time.Sleep(6 * time.Second)
+			log.Warn("loop redis countTotal", "total", countTotal, "get", countGet)
+		}
+	}()
+}
+
 func Del(ctx context.Context, key string) (int64, error) {
 	atomic.AddInt64(&countTotal, 1)
 	val, err := redisclient.Rdb.Del(ctx, key).Result()
