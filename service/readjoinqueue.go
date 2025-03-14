@@ -18,11 +18,11 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var MaxQueueSize = 10
+var MaxQueueSize = 5
 var LocalQueueSize = 50
 var RedisBatchSize = 5
 
-func InitReadJoinQueue(ctx context.Context) {
+func StartReadJoinQueue(ctx context.Context) {
 	wg := &sync.WaitGroup{}
 
 	for range MaxQueueSize {
@@ -137,9 +137,9 @@ func startReadQueue(ctx context.Context, wg *sync.WaitGroup) {
 					break
 				}
 				if delay {
-					startRead = time.After(1000 * time.Millisecond)
+					startRead = time.After(500 * time.Millisecond)
 				} else {
-					startRead = time.After(5 * time.Millisecond)
+					startRead = time.After(0 * time.Millisecond)
 				}
 			}
 
@@ -214,7 +214,11 @@ func tryDoSeckill(seckillId, userId, secKillTime int64, ticket string) error {
 	keyticket := ticket
 	keyusers := fmt.Sprintf("seckill:users:%d", seckillId)
 
+	// TODO 恢复正常
 	status, lastInsertID, err := executeTransaction(ctx, seckillId, userId, secKillTime)
+	// status := pb.InquireSeckillStatus_IS_SUCCESS
+	// lastInsertID := 1111
+	// var err error
 
 	if err != nil {
 		log.Warn("tryDoSeckill Transaction", "err", err)
@@ -268,7 +272,8 @@ func tryDoSeckill(seckillId, userId, secKillTime int64, ticket string) error {
 }
 
 func updateTicketStatus(ctx context.Context, keyticket string, status pb.InquireSeckillStatus) error {
-	keyticketsub := fmt.Sprintf("%s:channel", keyticket)
+	// keyticketsub := fmt.Sprintf("%s:channel", keyticket)
+	subkey := "seckill:notify"
 	_, err := redisclient.Rdb.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
 		// 更新redis上用户排队的状态
 		err := pipe.Set(ctx, keyticket, status.String(), time.Duration(rand.Intn(30)+80)*time.Second).Err()
@@ -277,12 +282,15 @@ func updateTicketStatus(ctx context.Context, keyticket string, status pb.Inquire
 		}
 
 		// 通知订阅者
-		n, e := pipe.Publish(ctx, keyticketsub, status.String()).Result()
+		n, e := pipe.Publish(ctx, subkey, SubscribeNotifyMessage{
+			Ticket: keyticket,
+			Status: status.String(),
+		}).Result()
 		if e != nil {
 			log.Error("updateTicketStatus pipe.Publish", "err", e)
 		} else {
 			if n == 0 {
-				log.Warn("updateTicketStatus pipe.Publish", "keyticketsub", keyticketsub, "n", n)
+				log.Info("updateTicketStatus pipe.Publish", "ticket", keyticket, "n", n)
 			}
 		}
 		return nil
@@ -332,7 +340,7 @@ func executeTransaction(ctx context.Context, seckillId, userId, secKillTime int6
 	now := time.Now()
 	insertRet, err := tx.ExecContext(ctx, "INSERT INTO seckill_order (seckill_id, user_id, created_at) VALUES (?, ?, ?)", seckillId, userId, now)
 	if err != nil {
-		log.Warn("tryDoSeckill InsertOne", "err", err)
+		log.Info("tryDoSeckill InsertOne", "err", err)
 		// TODO: 区分是普通错误，还是由于唯一索引冲突导致的错误？
 		e := tx.Rollback()
 		if e != nil {

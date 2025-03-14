@@ -11,10 +11,12 @@ var Rdb *redis.Client
 
 func InitRedis(addr, pwd string, db int) error {
 	client := redis.NewClient(&redis.Options{
-		Addr:        addr,
-		Password:    pwd,
-		DB:          db,
-		ReadTimeout: time.Duration(8) * time.Second,
+		Addr:           addr,
+		Password:       pwd,
+		DB:             db,
+		MaxActiveConns: 10000,
+		MaxIdleConns:   5000,
+		ReadTimeout:    time.Duration(8) * time.Second,
 	})
 
 	if err := client.Ping(context.Background()).Err(); err != nil {

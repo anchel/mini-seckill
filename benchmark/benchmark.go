@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"math"
-	"math/rand"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +27,7 @@ func main() {
 	var countInUserList int64
 	var countJoinSuccess int64
 	var countJoinFailed int64
+	var countFinished int64
 	var countOther int64
 
 	var countISError int64
@@ -40,8 +40,8 @@ func main() {
 	delayLen := len(delayArr)
 	delayMutex := sync.Mutex{}
 
-	maxC := 20001
-	seckillId := int64(6)
+	maxC := 10000
+	seckillId := int64(24)
 
 	conn, err := grpc.NewClient(*addr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
@@ -58,8 +58,8 @@ func main() {
 	for i := 0; i < maxC; i++ {
 		wg.Add(1)
 		go func(w *sync.WaitGroup, i int) {
-			// userid := int64(i + 1)
-			userid := rand.Int63n(1000000) + 1
+			userid := int64(i + 1)
+			// userid := rand.Int63n(1000000) + 1
 
 			rsp, err := c.JoinSeckill(context.Background(), &pb.JoinSeckillRequest{
 				SeckillId: seckillId,
@@ -75,7 +75,9 @@ func main() {
 
 			var done chan bool
 
-			if rsp.Status == pb.JoinSeckillStatus_JOIN_NO_REMAINING {
+			if rsp.Status == pb.JoinSeckillStatus_JOIN_FINISHED {
+				atomic.AddInt64(&countFinished, 1)
+			} else if rsp.Status == pb.JoinSeckillStatus_JOIN_NO_REMAINING {
 				atomic.AddInt64(&countEmpty, 1)
 			} else if rsp.Status == pb.JoinSeckillStatus_JOIN_SUCCESS {
 				atomic.AddInt64(&countJoinSuccess, 1)
@@ -139,6 +141,7 @@ func main() {
 	fmt.Println("time used:", time.Since(now).Seconds())
 
 	fmt.Printf("countError: %d\n", countError)
+	fmt.Printf("countFinished: %d\n", countFinished)
 	fmt.Printf("countEmpty: %d\n", countEmpty)
 	fmt.Printf("countInUserList: %d\n", countInUserList)
 	fmt.Printf("countJoinSuccess: %d\n", countJoinSuccess)
